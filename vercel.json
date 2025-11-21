@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "server.js", "use": "@vercel/node" },
+    { "src": "api/webhooks/stripe.js", "use": "@vercel/node" },
+    { "src": "api/orders/send-confirmation.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    {
+      "src": "/api/webhooks/stripe",
+      "dest": "/api/webhooks/stripe.js",
+      "methods": ["POST"]
+    },
+    {
+      "src": "/api/orders/send-confirmation",
+      "dest": "/api/orders/send-confirmation.js",
+      "methods": ["POST"]
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/server.js"
+    }
+  ]
+}
