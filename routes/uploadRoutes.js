@@ -131,13 +131,41 @@ router.delete("/delete", authMiddleware, async (req, res) => {
       return res.status(400).json({ message: "Image URL is required" });
     }
 
-    // Extract public_id from Cloudinary URL
-    const publicId = imageUrl.split('/').pop().split('.')[0];
-    const fullPublicId = `recycletrade/products/${publicId}`;
+    // Extract public_id from Cloudinary URL (handles different URL formats)
+    let publicId;
+    try {
+      // Cloudinary URL format: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/image_id.jpg
+      // Or: https://res.cloudinary.com/cloud_name/image/upload/folder/image_id.jpg
+      const urlParts = imageUrl.split('/');
+      const uploadIndex = urlParts.findIndex(part => part === 'upload');
+      
+      if (uploadIndex !== -1 && uploadIndex < urlParts.length - 1) {
+        // Get everything after 'upload' (skip version if present)
+        const afterUpload = urlParts.slice(uploadIndex + 1);
+        // Version starts with 'v' followed by digits - skip it
+        const pathParts = afterUpload[0].startsWith('v') && /^v\d+$/.test(afterUpload[0])
+          ? afterUpload.slice(1)
+          : afterUpload;
+        
+        // Join remaining parts and remove file extension
+        const pathWithId = pathParts.join('/');
+        publicId = pathWithId.replace(/\.[^/.]+$/, ''); // Remove extension
+      } else {
+        // Fallback: extract from end of URL
+        const fileName = urlParts[urlParts.length - 1];
+        publicId = fileName.split('.')[0];
+      }
+    } catch (err) {
+      console.error("Error parsing Cloudinary URL:", err);
+      // Fallback: simple extraction
+      const fileName = imageUrl.split('/').pop();
+      publicId = fileName.split('.')[0];
+    }
 
-    const result = await cloudinary.uploader.destroy(fullPublicId);
+    console.log(`Deleting image with public_id: ${publicId}`);
+    const result = await cloudinary.uploader.destroy(publicId);
     
-    if (result.result === "ok") {
+    if (result.result === "ok" || result.result === "not found") {
       res.json({ message: "Image deleted successfully" });
     } else {
       res.status(404).json({ message: "Image not found" });
