@@ -7,6 +7,45 @@ const Order = require('../../models/Orders');
 const Cart = require('../../models/Cart');
 const Product = require('../../models/Product');
 
+// Helper function to get customer name properly - removes duplicates
+const getCustomerName = (order) => {
+  if (order.userId?.name) {
+    // Clean up user name if it has duplicates
+    const name = (order.userId.name || '').trim();
+    if (name) {
+      const parts = name.split(/\s+/);
+      const uniqueParts = [];
+      parts.forEach(part => {
+        if (part && !uniqueParts.some(existing => existing.toLowerCase() === part.toLowerCase())) {
+          uniqueParts.push(part);
+        }
+      });
+      return uniqueParts.join(' ');
+    }
+    return name;
+  }
+  const firstName = (order.guestInfo?.firstName || '').trim();
+  const lastName = (order.guestInfo?.lastName || '').trim();
+  
+  // Remove duplicates within firstName or lastName
+  const cleanFirstName = firstName ? firstName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
+  const cleanLastName = lastName ? lastName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
+  
+  if (cleanFirstName && cleanLastName) {
+    // If firstName already contains lastName, just return firstName
+    if (cleanFirstName.toLowerCase().includes(cleanLastName.toLowerCase())) {
+      return cleanFirstName;
+    }
+    // If lastName already contains firstName, just return lastName
+    if (cleanLastName.toLowerCase().includes(cleanFirstName.toLowerCase())) {
+      return cleanLastName;
+    }
+    // Normal case: combine them with a space
+    return `${cleanFirstName} ${cleanLastName}`;
+  }
+  return cleanFirstName || cleanLastName || 'Guest Customer';
+};
+
 // NEW: Helper function to get API URL (works on both local and server)
 // Note: API_URL already includes /api, so we use it as-is
 const getApiUrl = () => {
@@ -114,7 +153,7 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
         } : {
           email: populatedOrder.guestInfo?.email,
           phone: populatedOrder.guestInfo?.phone,
-          name: `${populatedOrder.guestInfo?.firstName || ''} ${populatedOrder.guestInfo?.lastName || ''}`.trim()
+          name: getCustomerName(populatedOrder)
         };
 
         if (customer.email) {

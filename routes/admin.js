@@ -1,5 +1,44 @@
 const express = require("express");
 const router = express.Router();
+
+// Helper function to get customer name properly - removes duplicates
+const getCustomerName = (order) => {
+  if (order.userId?.name) {
+    // Clean up user name if it has duplicates
+    const name = (order.userId.name || '').trim();
+    if (name) {
+      const parts = name.split(/\s+/);
+      const uniqueParts = [];
+      parts.forEach(part => {
+        if (part && !uniqueParts.some(existing => existing.toLowerCase() === part.toLowerCase())) {
+          uniqueParts.push(part);
+        }
+      });
+      return uniqueParts.join(' ');
+    }
+    return name;
+  }
+  const firstName = (order.guestInfo?.firstName || '').trim();
+  const lastName = (order.guestInfo?.lastName || '').trim();
+  
+  // Remove duplicates within firstName or lastName
+  const cleanFirstName = firstName ? firstName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
+  const cleanLastName = lastName ? lastName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
+  
+  if (cleanFirstName && cleanLastName) {
+    // If firstName already contains lastName, just return firstName
+    if (cleanFirstName.toLowerCase().includes(cleanLastName.toLowerCase())) {
+      return cleanFirstName;
+    }
+    // If lastName already contains firstName, just return lastName
+    if (cleanLastName.toLowerCase().includes(cleanFirstName.toLowerCase())) {
+      return cleanLastName;
+    }
+    // Normal case: combine them with a space
+    return `${cleanFirstName} ${cleanLastName}`;
+  }
+  return cleanFirstName || cleanLastName || 'Guest Customer';
+};
 const User = require("../models/User");
 const Order = require("../models/Orders");
 const Product = require("../models/Product");
@@ -51,7 +90,7 @@ router.get("/overview", authMiddleware, roleCheck(["admin"]), async (req, res) =
       recentOrders: recentOrders.map(order => ({
         _id: order._id,
         orderNumber: `ORD-${order._id.toString().slice(-8).toUpperCase()}`,
-        customer: order.userId ? order.userId.name : `${order.guestInfo?.firstName} ${order.guestInfo?.lastName}`,
+        customer: getCustomerName(order),
         total: order.total,
         status: order.orderStatus,
         createdAt: order.createdAt
@@ -125,7 +164,7 @@ router.get("/seller-overview", authMiddleware, roleCheck(["seller", "seller_cand
         return {
           _id: order._id,
           orderNumber: `ORD-${order._id.toString().slice(-8).toUpperCase()}`,
-          customer: order.userId ? order.userId.name : `${order.guestInfo?.firstName} ${order.guestInfo?.lastName}`,
+          customer: getCustomerName(order),
           items: sellerItems.length,
           total: sellerItems.reduce((sum, item) => sum + (item.price * item.quantity), 0),
           status: order.orderStatus,
