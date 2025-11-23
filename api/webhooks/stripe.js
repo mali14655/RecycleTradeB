@@ -99,23 +99,28 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
 
       // NEW: Send order confirmation email when payment is successful
       try {
-        const customer = order.userId ? {
-          email: order.userId.email,
-          phone: order.userId.phone,
-          name: order.userId.name
+        // Populate order with product details before sending
+        const populatedOrder = await Order.findById(orderId)
+          .populate("items.productId", "name price images variants")
+          .populate("items.sellerId", "name email")
+          .populate("outletId", "name location address phone email")
+          .populate("userId", "name email phone")
+          .lean();
+
+        const customer = populatedOrder.userId ? {
+          email: populatedOrder.userId.email,
+          phone: populatedOrder.userId.phone,
+          name: populatedOrder.userId.name
         } : {
-          email: order.guestInfo?.email,
-          phone: order.guestInfo?.phone,
-          name: `${order.guestInfo?.firstName || ''} ${order.guestInfo?.lastName || ''}`.trim()
+          email: populatedOrder.guestInfo?.email,
+          phone: populatedOrder.guestInfo?.phone,
+          name: `${populatedOrder.guestInfo?.firstName || ''} ${populatedOrder.guestInfo?.lastName || ''}`.trim()
         };
 
         if (customer.email) {
           const apiUrl = getApiUrl();
           await axios.post(`${apiUrl}/notifications/send-order-confirmation`, {
-            order: {
-              ...order.toObject ? order.toObject() : order,
-              _id: order._id
-            },
+            order: populatedOrder,
             customer: customer
           }, {
             timeout: 10000,

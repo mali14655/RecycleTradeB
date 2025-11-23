@@ -359,7 +359,7 @@ router.get("/all", authMiddleware, roleCheck(["admin","company"]), async (req, r
   try {
     console.log("Fetching all orders for admin");
     const orders = await Order.find()
-      .populate("items.productId", "name price images")
+      .populate("items.productId", "name price images variants")
       .populate("items.sellerId", "name email")
       .populate("userId", "name email phone")
       .populate("outletId", "name location address phone")
@@ -448,33 +448,37 @@ router.post("/:orderId/process", authMiddleware, async (req, res) => {
 
 async function sendOrderConfirmation(order) {
   try {
-    const customer = order.userId ? {
-      email: order.userId.email,
-      phone: order.userId.phone,
-      name: order.userId.name
+    // Populate order with product details before sending
+    const populatedOrder = await Order.findById(order._id)
+      .populate("items.productId", "name price images variants")
+      .populate("items.sellerId", "name email")
+      .populate("outletId", "name location address phone email")
+      .populate("userId", "name email phone")
+      .lean();
+
+    const customer = populatedOrder.userId ? {
+      email: populatedOrder.userId.email,
+      phone: populatedOrder.userId.phone,
+      name: populatedOrder.userId.name
     } : {
-      email: order.guestInfo?.email,
-      phone: order.guestInfo?.phone,
-      name: `${order.guestInfo?.firstName} ${order.guestInfo?.lastName}`
+      email: populatedOrder.guestInfo?.email,
+      phone: populatedOrder.guestInfo?.phone,
+      name: `${populatedOrder.guestInfo?.firstName || ''} ${populatedOrder.guestInfo?.lastName || ''}`.trim()
     };
 
     // Convert ObjectId to string
-    const orderIdStr = order._id.toString();
+    const orderIdStr = populatedOrder._id.toString();
     const shortOrderId = orderIdStr.slice(-8);
 
     console.log('📧 Attempting to send order confirmation...', {
       customerEmail: customer.email,
-      orderId: order._id
+      orderId: populatedOrder._id
     });
 
     // NEW: Fix email sending - Use helper function to get correct API URL
     const apiUrl = getApiUrl();
     const response = await axios.post(`${apiUrl}/notifications/send-order-confirmation`, {
-      order: {
-        ...order.toObject ? order.toObject() : order,
-        _id: order._id,
-        shortId: shortOrderId
-      },
+      order: populatedOrder,
       customer: customer
     }, {
       timeout: 10000,
@@ -483,7 +487,7 @@ async function sendOrderConfirmation(order) {
       }
     });
 
-    console.log("✅ Order confirmation notification sent for order:", order._id, response.data);
+    console.log("✅ Order confirmation notification sent for order:", populatedOrder._id, response.data);
   } catch (notificationError) {
     console.error("❌ Failed to send order confirmation:", notificationError.message);
     // Don't fail the order creation if notification fails

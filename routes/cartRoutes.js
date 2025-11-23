@@ -77,10 +77,24 @@ router.post("/add", authMiddleware, async (req, res) => {
       });
     }
 
+    // Get the price from variant if variant exists, otherwise use product price
+    let itemPrice = product.price;
+    if (variantId && product.variants) {
+      const variant = product.variants.find(v => v._id.toString() === variantId.toString());
+      if (variant) {
+        itemPrice = variant.price;
+      }
+    }
+
     if (existingItem) {
       existingItem.quantity += addQuantity;
     } else {
-      cart.items.push({ productId, quantity: addQuantity, variantId: variantId || undefined });
+      cart.items.push({ 
+        productId, 
+        quantity: addQuantity, 
+        variantId: variantId || undefined,
+        price: itemPrice
+      });
     }
 
     cart.updatedAt = Date.now();
