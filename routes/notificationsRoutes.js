@@ -43,6 +43,9 @@ class UniversalEmailService {
           user: 'resend',
           pass: process.env.RESEND_API_KEY
         },
+        connectionTimeout: 10000, // 10 seconds
+        greetingTimeout: 5000,    // 5 seconds
+        socketTimeout: 10000,      // 10 seconds
         tls: {
           rejectUnauthorized: false
         }
@@ -64,9 +67,9 @@ class UniversalEmailService {
           user: process.env.SMTP_USER,
           pass: process.env.SMTP_PASS
         },
-        connectionTimeout: 30000,
-        greetingTimeout: 15000,
-        socketTimeout: 30000,
+        connectionTimeout: 10000,  // Reduced to 10 seconds
+        greetingTimeout: 5000,     // Reduced to 5 seconds
+        socketTimeout: 10000,       // Reduced to 10 seconds
         tls: {
           rejectUnauthorized: false
         }
@@ -96,6 +99,9 @@ class UniversalEmailService {
               user: process.env.EMAIL_USER,
               pass: process.env.EMAIL_PASS
             },
+            connectionTimeout: 10000, // 10 seconds
+            greetingTimeout: 5000,    // 5 seconds
+            socketTimeout: 10000,     // 10 seconds
             tls: {
               rejectUnauthorized: false
             }
@@ -131,12 +137,24 @@ class UniversalEmailService {
   async verifyConnection() {
     if (!this.transporter) return;
     
-    try {
-      await this.transporter.verify();
-      console.log(`✅ Email connection verified: ${this.transporter.name}`);
-    } catch (error) {
-      console.warn(`⚠️ Email connection issue: ${error.message}`);
-    }
+    // Don't block - verify in background with timeout
+    setTimeout(async () => {
+      try {
+        // Use Promise.race to add timeout to verification
+        const verifyPromise = this.transporter.verify();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Verification timeout')), 5000)
+        );
+        
+        await Promise.race([verifyPromise, timeoutPromise]);
+        console.log(`✅ Email connection verified: ${this.transporter.name}`);
+      } catch (error) {
+        // Don't log timeout errors as warnings - it's expected on some servers
+        if (!error.message.includes('timeout')) {
+          console.warn(`⚠️ Email connection issue: ${error.message}`);
+        }
+      }
+    }, 1000); // Wait 1 second before verifying to not block startup
   }
 
   async sendEmail(mailOptions) {
@@ -164,16 +182,31 @@ class UniversalEmailService {
     }
 
     try {
-      const result = await this.transporter.sendMail(options);
+      // Add timeout wrapper to prevent hanging
+      const sendPromise = this.transporter.sendMail(options);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000)
+      );
+      
+      const result = await Promise.race([sendPromise, timeoutPromise]);
       console.log(`✅ Email sent via ${this.transporter.name}:`, result.messageId);
       return result;
     } catch (error) {
-      console.error(`❌ Email failed (${this.transporter.name}):`, error.message);
+      // More detailed error logging
+      const errorMsg = error.message || 'Unknown error';
+      const isTimeout = errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT');
+      
+      if (isTimeout) {
+        console.error(`⏱️ Email timeout (${this.transporter.name}): Connection timed out after 15 seconds`);
+      } else {
+        console.error(`❌ Email failed (${this.transporter.name}):`, errorMsg);
+      }
       
       // Log email content even when failed
       console.log('📧 FAILED EMAIL CONTENT:', {
         to: options.to,
-        subject: options.subject
+        subject: options.subject,
+        error: errorMsg
       });
       
       // Return success anyway to not break user experience
@@ -475,10 +508,14 @@ router.post("/send-order-confirmation", async (req, res) => {
   }
 });
 
-// 2. STATUS UPDATE EMAIL
-router.post("/send-status-email", async (req, res) => {
+// NEW: Reusable function to send status update email (can be called directly)
+const sendStatusUpdateEmail = async (to, order, customerName, status, trackingNumber = null) => {
+  if (!to) {
+    console.log('⚠️ No recipient email provided, skipping status update email');
+    return { skipped: true, message: "No recipient email provided" };
+  }
+
   try {
-    const { to, order, customerName, status, trackingNumber } = req.body;
 
     const shortOrderId = getOrderShortId(order);
     const subject = `Order Status Update - #${shortOrderId}`;
@@ -631,13 +668,31 @@ router.post("/send-status-email", async (req, res) => {
     });
 
     console.log("✅ Status update email sent to:", to);
-    res.json({ 
+    return {
+      success: true,
       message: "Status update email processed successfully",
       messageId: result.messageId,
       service: emailService.transporter?.name || 'logged'
-    });
+    };
   } catch (error) {
     console.error("❌ Error sending status email:", error);
+    throw error; // Re-throw to let caller handle
+  }
+};
+
+// Route handler that uses the function above
+router.post("/send-status-email", async (req, res) => {
+  try {
+    const { to, order, customerName, status, trackingNumber } = req.body;
+    const result = await sendStatusUpdateEmail(to, order, customerName, status, trackingNumber);
+    
+    if (result.skipped) {
+      return res.json(result);
+    }
+    
+    res.json(result);
+  } catch (error) {
+    console.error("❌ Error in status email route:", error);
     res.status(500).json({ 
       message: "Failed to process status update email",
       error: error.message 
@@ -679,5 +734,6 @@ router.post("/send-email", async (req, res) => {
 
 // Export router as default
 module.exports = router;
-// Also export the function for direct use
+// Also export functions for direct use
 module.exports.sendOrderConfirmationEmail = sendOrderConfirmationEmail;
+module.exports.sendStatusUpdateEmail = sendStatusUpdateEmail;

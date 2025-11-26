@@ -155,63 +155,89 @@ async function sendOrderNotifications(order, isPickup = false, trackingNumber = 
   try {
     const customerEmail = order.userId?.email || order.guestInfo?.email;
     const customerPhone = order.userId?.phone || order.guestInfo?.phone;
-      const customerName = getCustomerName(order);
+    const customerName = getCustomerName(order);
 
     const orderIdStr = order._id.toString();
     const shortOrderId = orderIdStr.slice(-8);
 
-    // Create simplified order object
+    // Create simplified order object with items for email
     const simplifiedOrder = {
       _id: order._id,
       outletId: order.outletId,
       deliveryMethod: order.deliveryMethod,
-      total: order.total
+      total: order.total,
+      items: order.items || [] // Include items for email template
     };
 
-    const apiUrl = getApiUrl();
+    // NEW: Lazy load notification functions to avoid circular dependency
+    const notificationsModule = require('./notificationsRoutes');
+    const sendStatusUpdateEmail = notificationsModule.sendStatusUpdateEmail;
+    
+    if (!sendStatusUpdateEmail) {
+      throw new Error('sendStatusUpdateEmail function not found in notificationsRoutes');
+    }
     
     if (isPickup) {
       // PICKUP READY NOTIFICATION
       if (customerEmail) {
-        await axios.post(`${apiUrl}/notifications/send-status-email`, {
-          to: customerEmail,
-          order: simplifiedOrder,
-          customerName: customerName,
-          status: 'Ready for Pickup'
-        });
+        try {
+          await sendStatusUpdateEmail(customerEmail, simplifiedOrder, customerName, 'Ready for Pickup');
+          console.log("✅ Pickup ready email sent to:", customerEmail);
+        } catch (emailError) {
+          console.error("❌ Failed to send pickup email:", emailError.message);
+        }
       }
 
+      // WhatsApp notification (if route exists, otherwise skip)
       if (customerPhone) {
-        const pickupMessage = `Hello ${customerName}! Your order #${shortOrderId} is ready for pickup at ${order.outletId?.name || 'the selected outlet'}. Address: ${order.outletId?.address || 'Outlet address'}. Phone: ${order.outletId?.phone || 'N/A'}`;
-        
-        await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
-          to: customerPhone,
-          message: pickupMessage,
-          order: simplifiedOrder,
-          notificationType: 'pickup_ready'
-        });
+        try {
+          const apiUrl = getApiUrl();
+          const pickupMessage = `Hello ${customerName}! Your order #${shortOrderId} is ready for pickup at ${order.outletId?.name || 'the selected outlet'}. Address: ${order.outletId?.address || 'Outlet address'}. Phone: ${order.outletId?.phone || 'N/A'}`;
+          
+          await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
+            to: customerPhone,
+            message: pickupMessage,
+            order: simplifiedOrder,
+            notificationType: 'pickup_ready'
+          }).catch(() => {
+            // WhatsApp route might not exist, that's okay
+            console.log("⚠️ WhatsApp notification skipped (route not available)");
+          });
+        } catch (whatsappError) {
+          // Don't fail if WhatsApp fails
+          console.log("⚠️ WhatsApp notification skipped:", whatsappError.message);
+        }
       }
     } else if (trackingNumber) {
       // TRACKING NOTIFICATION  
       if (customerEmail) {
-        await axios.post(`${apiUrl}/notifications/send-status-email`, {
-          to: customerEmail,
-          order: simplifiedOrder,
-          customerName: customerName,
-          status: 'Shipped',
-          trackingNumber: trackingNumber
-        });
+        try {
+          await sendStatusUpdateEmail(customerEmail, simplifiedOrder, customerName, 'Shipped', trackingNumber);
+          console.log("✅ Tracking email sent to:", customerEmail);
+        } catch (emailError) {
+          console.error("❌ Failed to send tracking email:", emailError.message);
+        }
       }
 
+      // WhatsApp notification (if route exists, otherwise skip)
       if (customerPhone) {
-        const trackingMessage = `Hello ${customerName}! Your order #${shortOrderId} has been shipped. Tracking Number: ${trackingNumber}. Track your order here: ${process.env.FRONTEND_URL}/track-order`;
+        try {
+          const apiUrl = getApiUrl();
+          const trackingMessage = `Hello ${customerName}! Your order #${shortOrderId} has been shipped. Tracking Number: ${trackingNumber}. Track your order here: ${process.env.FRONTEND_URL}/track-order`;
 
-        await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
-          to: customerPhone,
-          message: trackingMessage,
-          order: simplifiedOrder,
-          notificationType: 'tracking'
-        });
+          await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
+            to: customerPhone,
+            message: trackingMessage,
+            order: simplifiedOrder,
+            notificationType: 'tracking'
+          }).catch(() => {
+            // WhatsApp route might not exist, that's okay
+            console.log("⚠️ WhatsApp notification skipped (route not available)");
+          });
+        } catch (whatsappError) {
+          // Don't fail if WhatsApp fails
+          console.log("⚠️ WhatsApp notification skipped:", whatsappError.message);
+        }
       }
     }
 
