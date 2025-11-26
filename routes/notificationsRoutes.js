@@ -1,5 +1,6 @@
 const express = require("express");
 const nodemailer = require("nodemailer");
+const axios = require("axios");
 
 const router = express.Router();
 
@@ -80,26 +81,31 @@ class UniversalEmailService {
     console.log('📧 ================================================\n');
   }
 
-  // 1. RESEND.COM (Most reliable - works on any server)
+  // 1. RESEND.COM (Uses REST API via HTTPS - works on ALL servers, no SMTP ports needed)
   createResendTransporter() {
     if (process.env.RESEND_API_KEY) {
-      const transporter = nodemailer.createTransport({
-        host: 'smtp.resend.com',
-        port: 587,
-        secure: false,
-        auth: {
-          user: 'resend',
-          pass: process.env.RESEND_API_KEY
-        },
-        connectionTimeout: 10000, // 10 seconds
-        greetingTimeout: 5000,    // 5 seconds
-        socketTimeout: 10000,      // 10 seconds
-        tls: {
-          rejectUnauthorized: false
-        }
-      });
-      transporter.name = 'Resend';
-      return transporter;
+      try {
+        console.log('📧 Resend: Initializing Resend REST API (HTTPS-based, works on all servers)...');
+        
+        // Create a special transporter object that uses Resend REST API
+        const resendTransporter = {
+          name: 'Resend (REST API)',
+          apiKey: process.env.RESEND_API_KEY,
+          // Flag to indicate this uses REST API, not SMTP
+          isResendAPI: true,
+          // Skip verification (REST API doesn't need SMTP verification)
+          verify: async () => {
+            console.log('✅ Resend: REST API ready (no verification needed)');
+            return true;
+          }
+        };
+        
+        console.log('✅ Resend: REST API transporter initialized successfully');
+        return resendTransporter;
+      } catch (error) {
+        console.error('❌ Resend: Failed to initialize:', error.message);
+        return null;
+      }
     }
     return null;
   }
@@ -204,6 +210,12 @@ class UniversalEmailService {
       return;
     }
     
+    // Skip verification for Resend REST API (it's not SMTP, doesn't need verification)
+    if (this.transporter.isResendAPI) {
+      console.log(`✅ Resend: REST API ready (no SMTP verification needed)`);
+      return;
+    }
+    
     console.log(`📧 Verify: Starting connection verification for ${this.transporter.name}...`);
     
     // Don't block - verify in background with timeout
@@ -253,6 +265,62 @@ class UniversalEmailService {
     }, 2000); // Wait 2 seconds before verifying to not block startup
   }
 
+  // NEW: Send email via Resend REST API (HTTPS, works on all servers)
+  async sendViaResendAPI(options) {
+    try {
+      console.log('📧 Resend API: Sending email via HTTPS REST API...');
+      
+      // Parse from address
+      let fromAddress = typeof options.from === 'object' ? options.from.address : options.from;
+      let fromName = typeof options.from === 'object' ? options.from.name : 'RecycleTrade';
+      
+      // Format from address
+      const from = fromName ? `${fromName} <${fromAddress}>` : fromAddress;
+      
+      // Prepare Resend API request
+      const resendPayload = {
+        from: from,
+        to: [options.to], // Resend expects array
+        subject: options.subject,
+        html: options.html || options.text,
+        ...(options.text && { text: options.text })
+      };
+      
+      console.log('📧 Resend API: Calling Resend API via HTTPS...');
+      
+      // Call Resend REST API
+      const response = await axios.post(
+        'https://api.resend.com/emails',
+        resendPayload,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.transporter.apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 15000 // 15 second timeout
+        }
+      );
+      
+      console.log('✅ Resend API: Email sent successfully via HTTPS');
+      console.log('✅ Resend API: Response:', response.data);
+      
+      // Format response to match nodemailer format
+      return {
+        messageId: response.data.id || `resend-${Date.now()}`,
+        accepted: [options.to],
+        rejected: [],
+        response: response.data
+      };
+    } catch (error) {
+      console.error('❌ Resend API: Failed to send email via REST API');
+      console.error('❌ Resend API: Error:', error.response?.data || error.message);
+      console.error('❌ Resend API: Status:', error.response?.status);
+      console.error('❌ Resend API: Full error:', error);
+      
+      throw new Error(`Resend API error: ${error.response?.data?.message || error.message}`);
+    }
+  }
+
   async sendEmail(mailOptions) {
     const defaultFrom = {
       name: 'RecycleTrade',
@@ -283,6 +351,12 @@ class UniversalEmailService {
       console.log(`📧 Send: Subject: ${options.subject}`);
       console.log(`📧 Send: From: ${typeof options.from === 'object' ? options.from.address : options.from}`);
       
+      // Check if this is Resend REST API (not SMTP)
+      if (this.transporter.isResendAPI) {
+        return await this.sendViaResendAPI(options);
+      }
+      
+      // For SMTP transporters, use nodemailer
       // Add timeout wrapper to prevent hanging
       const sendPromise = this.transporter.sendMail(options);
       const timeoutPromise = new Promise((_, reject) => 
@@ -391,116 +465,65 @@ router.get("/test-config", async (req, res) => {
   res.json(config);
 });
 
-// NEW: Debug endpoint to test Gmail connection and sending
+// NEW: Debug endpoint to test email service (works with any configured service)
 router.get("/debug-email", async (req, res) => {
   try {
     console.log('\n🔍 ========== EMAIL DEBUG TEST ==========');
     
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    if (!emailService.isConfigured || !emailService.transporter) {
       return res.json({ 
         success: false, 
-        error: 'EMAIL_USER or EMAIL_PASS not set in environment variables',
+        error: 'No email service configured',
         config: {
-          hasEmailUser: !!process.env.EMAIL_USER,
-          hasEmailPass: !!process.env.EMAIL_PASS,
-          emailUser: process.env.EMAIL_USER || 'Not set'
-        }
+          isConfigured: emailService.isConfigured,
+          transporter: emailService.transporter?.name || 'none',
+          availableServices: {
+            resend: !!process.env.RESEND_API_KEY,
+            smtp: !!(process.env.SMTP_HOST && process.env.SMTP_USER),
+            gmail: !!(process.env.EMAIL_USER && process.env.EMAIL_PASS)
+          }
+        },
+        solution: 'Set RESEND_API_KEY for cloud servers, or EMAIL_USER/EMAIL_PASS for local development'
       });
     }
 
-    console.log('🔍 Testing Gmail connection...');
-    console.log('🔍 Email User:', process.env.EMAIL_USER);
-    console.log('🔍 Password provided:', process.env.EMAIL_PASS ? 'Yes' : 'No');
-
-    // Create test transporter
-    const testTransporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      },
-      connectionTimeout: 15000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
-      tls: {
-        rejectUnauthorized: false,
-        ciphers: 'SSLv3'
-      },
-      debug: true,
-      logger: true
-    });
-
-    console.log('🔍 Step 1: Testing connection verification...');
+    console.log('🔍 Testing email service:', emailService.transporter.name);
+    console.log('🔍 Service type:', emailService.transporter.isResendAPI ? 'Resend REST API (HTTPS)' : 'SMTP');
     
-    // Test connection with timeout
-    const verifyPromise = testTransporter.verify();
-    const verifyTimeout = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Verification timeout after 15 seconds')), 15000)
-    );
+    const testEmail = process.env.ADMIN_EMAIL || process.env.EMAIL_USER || 'test@example.com';
+    
+    console.log('🔍 Step 1: Testing email send...');
+    console.log('🔍 Test email will be sent to:', testEmail);
     
     try {
-      await Promise.race([verifyPromise, verifyTimeout]);
-      console.log('✅ Step 1: Connection verification successful');
-    } catch (verifyError) {
-      console.error('❌ Step 1: Connection verification failed:', verifyError.message);
-      return res.json({ 
-        success: false, 
-        step: 'connection_verification',
-        error: verifyError.message,
-        errorCode: verifyError.code,
-        details: {
-          message: 'Cannot connect to Gmail SMTP server',
-          possibleCauses: [
-            'Wrong EMAIL_USER or EMAIL_PASS',
-            'Using regular password instead of App Password',
-            '2FA not enabled or App Password not generated',
-            'Firewall blocking port 587',
-            'Network connectivity issues',
-            'Gmail blocking the connection'
-          ]
-        }
+      const result = await emailService.sendEmail({
+        to: testEmail,
+        subject: 'Email Service Test - RecycleTrade',
+        html: `
+          <div style="font-family: Arial, sans-serif; padding: 20px;">
+            <h2>✅ Email Service Test Successful!</h2>
+            <p>If you received this email, your email configuration is working correctly.</p>
+            <p><strong>Service:</strong> ${emailService.transporter.name}</p>
+            <p><strong>Test Time:</strong> ${new Date().toLocaleString()}</p>
+            <p><strong>Server:</strong> ${process.env.NODE_ENV || 'development'}</p>
+          </div>
+        `
       });
-    }
-
-    console.log('🔍 Step 2: Testing email send...');
-    const testEmail = process.env.ADMIN_EMAIL || process.env.EMAIL_USER;
-    
-    // Test send with timeout
-    const sendPromise = testTransporter.sendMail({
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to: testEmail,
-      subject: 'Gmail Connection Test - RecycleTrade',
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px;">
-          <h2>✅ Gmail Connection Test Successful!</h2>
-          <p>If you received this email, your Gmail configuration is working correctly.</p>
-          <p><strong>Test Time:</strong> ${new Date().toLocaleString()}</p>
-          <p><strong>Server:</strong> ${process.env.NODE_ENV || 'development'}</p>
-        </div>
-      `
-    });
-    
-    const sendTimeout = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Send timeout after 20 seconds')), 20000)
-    );
-    
-    try {
-      const result = await Promise.race([sendPromise, sendTimeout]);
-      console.log('✅ Step 2: Email send successful');
+      
+      console.log('✅ Step 1: Email send successful');
       console.log('✅ Message ID:', result.messageId);
       console.log('🔍 ============================================\n');
       
       return res.json({ 
         success: true, 
-        message: 'Gmail connection and email sending working correctly!',
+        message: 'Email service working correctly!',
         messageId: result.messageId,
         sentTo: testEmail,
-        transporter: 'Gmail (port 587)'
+        transporter: emailService.transporter.name,
+        serviceType: emailService.transporter.isResendAPI ? 'REST API (HTTPS)' : 'SMTP'
       });
     } catch (sendError) {
-      console.error('❌ Step 2: Email send failed:', sendError.message);
+      console.error('❌ Step 1: Email send failed:', sendError.message);
       console.error('🔍 ============================================\n');
       
       return res.json({ 
@@ -508,13 +531,19 @@ router.get("/debug-email", async (req, res) => {
         step: 'email_send',
         error: sendError.message,
         errorCode: sendError.code,
+        transporter: emailService.transporter.name,
         details: {
-          message: 'Connection verified but email sending failed',
-          possibleCauses: [
-            'Gmail rate limiting',
-            'Email address not verified',
-            'Account security restrictions',
-            'Network issues during send'
+          message: 'Email sending failed',
+          possibleCauses: emailService.transporter.isResendAPI ? [
+            'Invalid RESEND_API_KEY',
+            'Resend API rate limiting',
+            'Invalid email address format',
+            'Network connectivity issues'
+          ] : [
+            'SMTP connection timeout (common on cloud servers)',
+            'Wrong credentials',
+            'Firewall blocking SMTP ports',
+            'Network connectivity issues'
           ]
         }
       });
