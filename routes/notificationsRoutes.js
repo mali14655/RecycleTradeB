@@ -270,12 +270,37 @@ class UniversalEmailService {
     try {
       console.log('📧 Resend API: Sending email via HTTPS REST API...');
       
-      // Parse from address
-      let fromAddress = typeof options.from === 'object' ? options.from.address : options.from;
-      let fromName = typeof options.from === 'object' ? options.from.name : 'RecycleTrade';
+      // Parse from address - handle different formats
+      let from;
       
-      // Format from address
-      const from = fromName ? `${fromName} <${fromAddress}>` : fromAddress;
+      if (typeof options.from === 'object') {
+        // Object format: { name: 'RecycleTrade', address: 'email@example.com' }
+        const fromAddress = options.from.address;
+        const fromName = options.from.name;
+        // Format for Resend: "Name <email@example.com>" or just "email@example.com"
+        from = fromName ? `${fromName} <${fromAddress}>` : fromAddress;
+      } else if (typeof options.from === 'string') {
+        // String format: could be "email@example.com" or "Name <email@example.com>"
+        // Check if it's already in the correct format
+        if (options.from.includes('<') && options.from.includes('>')) {
+          // Already formatted: "Name <email@example.com>" - use as is
+          from = options.from.trim();
+        } else {
+          // Just email: "email@example.com" - use as is (Resend accepts this)
+          from = options.from.trim();
+        }
+      } else {
+        // Fallback - use environment variable or default
+        const defaultFrom = process.env.EMAIL_FROM || 'onboarding@resend.dev';
+        // Check if EMAIL_FROM is already formatted
+        if (defaultFrom.includes('<') && defaultFrom.includes('>')) {
+          from = defaultFrom;
+        } else {
+          from = `RecycleTrade <${defaultFrom}>`;
+        }
+      }
+      
+      console.log('📧 Resend API: From address:', from);
       
       // Prepare Resend API request
       const resendPayload = {
@@ -322,10 +347,21 @@ class UniversalEmailService {
   }
 
   async sendEmail(mailOptions) {
-    const defaultFrom = {
-      name: 'RecycleTrade',
-      address: process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.SMTP_USER || 'noreply@recycletrade.com'
-    };
+    // Handle EMAIL_FROM - it might be formatted string or just email
+    let defaultFrom;
+    const emailFrom = process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.SMTP_USER || 'onboarding@resend.dev';
+    
+    // Check if EMAIL_FROM is already formatted as "Name <email@example.com>"
+    if (emailFrom.includes('<') && emailFrom.includes('>')) {
+      // Already formatted string - use as is
+      defaultFrom = emailFrom;
+    } else {
+      // Just email address - create object for formatting
+      defaultFrom = {
+        name: 'RecycleTrade',
+        address: emailFrom
+      };
+    }
 
     const options = {
       from: mailOptions.from || defaultFrom,
