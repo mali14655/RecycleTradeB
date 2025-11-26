@@ -167,13 +167,25 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
             const result = await sendOrderConfirmationEmail(populatedOrder, customer);
             
             if (result.success) {
-              console.log('✅ Order confirmation email sent for paid order:', orderId, result);
+              console.log('✅ Order confirmation email sent for paid order:', orderId);
+              console.log('✅ Email details:', {
+                messageId: result.messageId,
+                service: result.service,
+                to: customer.email
+              });
             } else if (result.skipped) {
               console.log('⚠️ Order confirmation skipped:', result.message);
             }
           } catch (emailError) {
-            console.error('❌ Failed to send order confirmation email:', emailError.message);
-            // Don't fail the webhook if email fails
+            // Detailed error logging
+            console.error('\n❌ ========== WEBHOOK ORDER CONFIRMATION EMAIL FAILED ==========');
+            console.error('❌ Order ID:', orderId);
+            console.error('❌ Customer Email:', customer.email);
+            console.error('❌ Error Message:', emailError.message);
+            console.error('❌ Error Code:', emailError.code || 'NO_CODE');
+            console.error('❌ Full Error:', emailError);
+            console.error('❌ =============================================================\n');
+            // Don't fail the webhook if email fails, but log it clearly
           }
         }
       } catch (emailError) {

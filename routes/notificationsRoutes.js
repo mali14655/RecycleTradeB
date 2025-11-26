@@ -12,24 +12,59 @@ class UniversalEmailService {
   }
 
   init() {
+    console.log('\n📧 ========== INITIALIZING EMAIL SERVICE ==========');
+    console.log('📧 Checking available email configurations...');
+    
+    // Check what's available
+    const hasResend = !!process.env.RESEND_API_KEY;
+    const hasSMTP = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+    const hasGmail = !!(process.env.EMAIL_USER && process.env.EMAIL_PASS);
+    
+    console.log(`📧 Resend API Key: ${hasResend ? '✅ Found' : '❌ Not set'}`);
+    console.log(`📧 SMTP Config: ${hasSMTP ? '✅ Found' : '❌ Not set'}`);
+    console.log(`📧 Gmail Config: ${hasGmail ? '✅ Found' : '❌ Not set'}`);
+    
     // Try configuration methods in order of reliability
-    const transporters = [
-      this.createResendTransporter(),    // Most reliable (API-based)
-      this.createSMTPTransporter(),      // Generic SMTP
-      this.createGmailTransporter(),     // Gmail fallback
-      this.createEtherealTransporter()   // Development fallback
-    ].filter(Boolean);
+    // NOTE: User wants to use Gmail, so prioritize it if configured
+    const transporters = [];
+    
+    // If Gmail is configured, try it first (user preference)
+    if (hasGmail) {
+      console.log('📧 Prioritizing Gmail configuration (user preference)...');
+      const gmailTransporter = this.createGmailTransporter();
+      if (gmailTransporter) transporters.push(gmailTransporter);
+    }
+    
+    // Then try other options
+    const resendTransporter = this.createResendTransporter();
+    if (resendTransporter) transporters.push(resendTransporter);
+    
+    const smtpTransporter = this.createSMTPTransporter();
+    if (smtpTransporter) transporters.push(smtpTransporter);
+    
+    // If Gmail wasn't added yet, try it now
+    if (!hasGmail || transporters.length === 0) {
+      const gmailTransporter = this.createGmailTransporter();
+      if (gmailTransporter) transporters.push(gmailTransporter);
+    }
+    
+    const etherealTransporter = this.createEtherealTransporter();
+    if (etherealTransporter) transporters.push(etherealTransporter);
 
     if (transporters.length > 0) {
       this.transporter = transporters[0];
       this.isConfigured = true;
       console.log(`✅ Email service initialized with: ${transporters[0].name}`);
+      console.log(`📧 Total available transporters: ${transporters.length}`);
       
       // Verify connection in background
       this.verifyConnection();
     } else {
-      console.warn('⚠️ No email transport configured - emails will be logged only');
+      console.error('❌ No email transport configured - emails will be logged only');
+      console.error('❌ Please set EMAIL_USER and EMAIL_PASS for Gmail, or configure another email service');
     }
+    
+    console.log('📧 ================================================\n');
   }
 
   // 1. RESEND.COM (Most reliable - works on any server)
@@ -82,37 +117,53 @@ class UniversalEmailService {
 
   // 3. GMAIL (Common but less reliable in cloud)
   createGmailTransporter() {
-    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-      const portsToTry = [
-        { port: 587, secure: false },
-        { port: 465, secure: true },
-        { port: 25, secure: false }
-      ];
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      console.log('📧 Gmail: EMAIL_USER or EMAIL_PASS not set, skipping Gmail transporter');
+      return null;
+    }
 
-      for (const config of portsToTry) {
-        try {
-          const transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: config.port,
-            secure: config.secure,
-            auth: {
-              user: process.env.EMAIL_USER,
-              pass: process.env.EMAIL_PASS
-            },
-            connectionTimeout: 10000, // 10 seconds
-            greetingTimeout: 5000,    // 5 seconds
-            socketTimeout: 10000,     // 10 seconds
-            tls: {
-              rejectUnauthorized: false
-            }
-          });
-          transporter.name = `Gmail (port ${config.port})`;
-          return transporter;
-        } catch (error) {
-          continue;
-        }
+    console.log('📧 Gmail: Attempting to create Gmail transporter...');
+    console.log('📧 Gmail: Using email:', process.env.EMAIL_USER);
+    console.log('📧 Gmail: Password provided:', process.env.EMAIL_PASS ? 'Yes (hidden)' : 'No');
+
+    const portsToTry = [
+      { port: 587, secure: false, name: 'STARTTLS' },
+      { port: 465, secure: true, name: 'SSL/TLS' }
+    ];
+
+    for (const config of portsToTry) {
+      try {
+        console.log(`📧 Gmail: Trying port ${config.port} (${config.name})...`);
+        
+        const transporter = nodemailer.createTransport({
+          host: 'smtp.gmail.com',
+          port: config.port,
+          secure: config.secure,
+          auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS
+          },
+          connectionTimeout: 15000, // 15 seconds
+          greetingTimeout: 10000,   // 10 seconds
+          socketTimeout: 15000,     // 15 seconds
+          tls: {
+            rejectUnauthorized: false,
+            ciphers: 'SSLv3'
+          },
+          debug: true, // Enable debug logging
+          logger: true  // Enable logger
+        });
+        
+        transporter.name = `Gmail (port ${config.port})`;
+        console.log(`✅ Gmail: Transporter created for port ${config.port}`);
+        return transporter;
+      } catch (error) {
+        console.error(`❌ Gmail: Failed to create transporter on port ${config.port}:`, error.message);
+        continue;
       }
     }
+    
+    console.error('❌ Gmail: All port attempts failed');
     return null;
   }
 
@@ -135,26 +186,54 @@ class UniversalEmailService {
   }
 
   async verifyConnection() {
-    if (!this.transporter) return;
+    if (!this.transporter) {
+      console.log('📧 Verify: No transporter available to verify');
+      return;
+    }
+    
+    console.log(`📧 Verify: Starting connection verification for ${this.transporter.name}...`);
     
     // Don't block - verify in background with timeout
     setTimeout(async () => {
       try {
+        console.log(`📧 Verify: Attempting to verify ${this.transporter.name} connection...`);
+        
         // Use Promise.race to add timeout to verification
         const verifyPromise = this.transporter.verify();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Verification timeout')), 5000)
+          setTimeout(() => reject(new Error('Verification timeout after 10 seconds')), 10000)
         );
         
         await Promise.race([verifyPromise, timeoutPromise]);
-        console.log(`✅ Email connection verified: ${this.transporter.name}`);
+        console.log(`✅ Verify: Email connection verified successfully for ${this.transporter.name}`);
       } catch (error) {
-        // Don't log timeout errors as warnings - it's expected on some servers
-        if (!error.message.includes('timeout')) {
-          console.warn(`⚠️ Email connection issue: ${error.message}`);
+        const errorMsg = error.message || 'Unknown error';
+        console.error(`❌ Verify: Email connection verification FAILED for ${this.transporter.name}`);
+        console.error(`❌ Verify: Error details:`, {
+          message: errorMsg,
+          code: error.code,
+          command: error.command,
+          response: error.response,
+          responseCode: error.responseCode
+        });
+        
+        // Log specific error types
+        if (errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT')) {
+          console.error(`❌ Verify: Connection timeout - Gmail server not responding`);
+          console.error(`❌ Verify: This usually means:`);
+          console.error(`   - Firewall blocking port 587/465`);
+          console.error(`   - Network connectivity issues`);
+          console.error(`   - Gmail blocking the connection`);
+        } else if (errorMsg.includes('EAUTH') || errorMsg.includes('authentication')) {
+          console.error(`❌ Verify: Authentication failed - check EMAIL_USER and EMAIL_PASS`);
+          console.error(`❌ Verify: Make sure you're using an App Password, not your regular password`);
+        } else if (errorMsg.includes('ECONNREFUSED')) {
+          console.error(`❌ Verify: Connection refused - Gmail server not reachable`);
+        } else {
+          console.error(`❌ Verify: Unknown error: ${errorMsg}`);
         }
       }
-    }, 1000); // Wait 1 second before verifying to not block startup
+    }, 2000); // Wait 2 seconds before verifying to not block startup
   }
 
   async sendEmail(mailOptions) {
@@ -182,35 +261,81 @@ class UniversalEmailService {
     }
 
     try {
+      console.log(`📧 Send: Attempting to send email via ${this.transporter.name}...`);
+      console.log(`📧 Send: To: ${options.to}`);
+      console.log(`📧 Send: Subject: ${options.subject}`);
+      console.log(`📧 Send: From: ${typeof options.from === 'object' ? options.from.address : options.from}`);
+      
       // Add timeout wrapper to prevent hanging
       const sendPromise = this.transporter.sendMail(options);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000)
+        setTimeout(() => reject(new Error('Email send timeout after 20 seconds')), 20000)
       );
       
       const result = await Promise.race([sendPromise, timeoutPromise]);
-      console.log(`✅ Email sent via ${this.transporter.name}:`, result.messageId);
+      console.log(`✅ Send: Email sent successfully via ${this.transporter.name}`);
+      console.log(`✅ Send: Message ID: ${result.messageId}`);
+      console.log(`✅ Send: Accepted recipients: ${result.accepted?.join(', ') || 'N/A'}`);
+      if (result.rejected && result.rejected.length > 0) {
+        console.warn(`⚠️ Send: Rejected recipients: ${result.rejected.join(', ')}`);
+      }
       return result;
     } catch (error) {
-      // More detailed error logging
+      // Comprehensive error logging
       const errorMsg = error.message || 'Unknown error';
-      const isTimeout = errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT');
+      const errorCode = error.code || 'NO_CODE';
+      const isTimeout = errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT') || errorCode === 'ETIMEDOUT';
+      const isAuthError = errorMsg.includes('EAUTH') || errorMsg.includes('authentication') || errorCode === 'EAUTH';
+      const isConnectionError = errorMsg.includes('ECONNREFUSED') || errorMsg.includes('ENOTFOUND') || errorCode === 'ECONNREFUSED';
+      
+      console.error(`\n❌ ========== EMAIL SEND FAILED ==========`);
+      console.error(`❌ Transporter: ${this.transporter.name}`);
+      console.error(`❌ To: ${options.to}`);
+      console.error(`❌ Subject: ${options.subject}`);
+      console.error(`❌ Error Message: ${errorMsg}`);
+      console.error(`❌ Error Code: ${errorCode}`);
       
       if (isTimeout) {
-        console.error(`⏱️ Email timeout (${this.transporter.name}): Connection timed out after 15 seconds`);
+        console.error(`❌ Error Type: CONNECTION TIMEOUT`);
+        console.error(`❌ Details: Email server did not respond within 20 seconds`);
+        console.error(`❌ Possible causes:`);
+        console.error(`   - Gmail SMTP servers are blocking your connection`);
+        console.error(`   - Firewall or network blocking port 587/465`);
+        console.error(`   - Server network connectivity issues`);
+        console.error(`   - Gmail rate limiting or blocking`);
+      } else if (isAuthError) {
+        console.error(`❌ Error Type: AUTHENTICATION FAILED`);
+        console.error(`❌ Details: Invalid email credentials`);
+        console.error(`❌ Possible causes:`);
+        console.error(`   - Wrong EMAIL_USER or EMAIL_PASS`);
+        console.error(`   - Using regular password instead of App Password`);
+        console.error(`   - 2FA not enabled or App Password not generated`);
+        console.error(`   - Account security settings blocking access`);
+      } else if (isConnectionError) {
+        console.error(`❌ Error Type: CONNECTION REFUSED`);
+        console.error(`❌ Details: Cannot reach Gmail SMTP server`);
+        console.error(`❌ Possible causes:`);
+        console.error(`   - Network connectivity issues`);
+        console.error(`   - DNS resolution problems`);
+        console.error(`   - Firewall blocking outbound connections`);
       } else {
-        console.error(`❌ Email failed (${this.transporter.name}):`, errorMsg);
+        console.error(`❌ Error Type: UNKNOWN ERROR`);
+        console.error(`❌ Full Error:`, error);
       }
       
-      // Log email content even when failed
-      console.log('📧 FAILED EMAIL CONTENT:', {
+      console.error(`❌ ========================================\n`);
+      
+      // Log email content that failed
+      console.log('📧 FAILED EMAIL DETAILS:', {
         to: options.to,
         subject: options.subject,
-        error: errorMsg
+        from: typeof options.from === 'object' ? options.from.address : options.from,
+        error: errorMsg,
+        errorCode: errorCode
       });
       
-      // Return success anyway to not break user experience
-      return { messageId: 'failed-but-continued', accepted: [options.to] };
+      // Re-throw the error so caller knows it failed
+      throw error;
     }
   }
 }
@@ -241,10 +366,150 @@ router.get("/test-config", async (req, res) => {
     },
     currentService: emailService.transporter?.name || 'none',
     isConfigured: emailService.isConfigured,
-    fromEmail: process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.SMTP_USER
+    fromEmail: process.env.EMAIL_FROM || process.env.EMAIL_USER || process.env.SMTP_USER,
+    emailUser: process.env.EMAIL_USER ? `${process.env.EMAIL_USER.substring(0, 3)}***` : 'Not set',
+    hasEmailPass: !!process.env.EMAIL_PASS
   };
 
   res.json(config);
+});
+
+// NEW: Debug endpoint to test Gmail connection and sending
+router.get("/debug-email", async (req, res) => {
+  try {
+    console.log('\n🔍 ========== EMAIL DEBUG TEST ==========');
+    
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      return res.json({ 
+        success: false, 
+        error: 'EMAIL_USER or EMAIL_PASS not set in environment variables',
+        config: {
+          hasEmailUser: !!process.env.EMAIL_USER,
+          hasEmailPass: !!process.env.EMAIL_PASS,
+          emailUser: process.env.EMAIL_USER || 'Not set'
+        }
+      });
+    }
+
+    console.log('🔍 Testing Gmail connection...');
+    console.log('🔍 Email User:', process.env.EMAIL_USER);
+    console.log('🔍 Password provided:', process.env.EMAIL_PASS ? 'Yes' : 'No');
+
+    // Create test transporter
+    const testTransporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 587,
+      secure: false,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      },
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+      tls: {
+        rejectUnauthorized: false,
+        ciphers: 'SSLv3'
+      },
+      debug: true,
+      logger: true
+    });
+
+    console.log('🔍 Step 1: Testing connection verification...');
+    
+    // Test connection with timeout
+    const verifyPromise = testTransporter.verify();
+    const verifyTimeout = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Verification timeout after 15 seconds')), 15000)
+    );
+    
+    try {
+      await Promise.race([verifyPromise, verifyTimeout]);
+      console.log('✅ Step 1: Connection verification successful');
+    } catch (verifyError) {
+      console.error('❌ Step 1: Connection verification failed:', verifyError.message);
+      return res.json({ 
+        success: false, 
+        step: 'connection_verification',
+        error: verifyError.message,
+        errorCode: verifyError.code,
+        details: {
+          message: 'Cannot connect to Gmail SMTP server',
+          possibleCauses: [
+            'Wrong EMAIL_USER or EMAIL_PASS',
+            'Using regular password instead of App Password',
+            '2FA not enabled or App Password not generated',
+            'Firewall blocking port 587',
+            'Network connectivity issues',
+            'Gmail blocking the connection'
+          ]
+        }
+      });
+    }
+
+    console.log('🔍 Step 2: Testing email send...');
+    const testEmail = process.env.ADMIN_EMAIL || process.env.EMAIL_USER;
+    
+    // Test send with timeout
+    const sendPromise = testTransporter.sendMail({
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+      to: testEmail,
+      subject: 'Gmail Connection Test - RecycleTrade',
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px;">
+          <h2>✅ Gmail Connection Test Successful!</h2>
+          <p>If you received this email, your Gmail configuration is working correctly.</p>
+          <p><strong>Test Time:</strong> ${new Date().toLocaleString()}</p>
+          <p><strong>Server:</strong> ${process.env.NODE_ENV || 'development'}</p>
+        </div>
+      `
+    });
+    
+    const sendTimeout = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Send timeout after 20 seconds')), 20000)
+    );
+    
+    try {
+      const result = await Promise.race([sendPromise, sendTimeout]);
+      console.log('✅ Step 2: Email send successful');
+      console.log('✅ Message ID:', result.messageId);
+      console.log('🔍 ============================================\n');
+      
+      return res.json({ 
+        success: true, 
+        message: 'Gmail connection and email sending working correctly!',
+        messageId: result.messageId,
+        sentTo: testEmail,
+        transporter: 'Gmail (port 587)'
+      });
+    } catch (sendError) {
+      console.error('❌ Step 2: Email send failed:', sendError.message);
+      console.error('🔍 ============================================\n');
+      
+      return res.json({ 
+        success: false, 
+        step: 'email_send',
+        error: sendError.message,
+        errorCode: sendError.code,
+        details: {
+          message: 'Connection verified but email sending failed',
+          possibleCauses: [
+            'Gmail rate limiting',
+            'Email address not verified',
+            'Account security restrictions',
+            'Network issues during send'
+          ]
+        }
+      });
+    }
+  } catch (error) {
+    console.error('❌ Debug test failed:', error.message);
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      errorCode: error.code
+    });
+  }
 });
 
 // Send test email

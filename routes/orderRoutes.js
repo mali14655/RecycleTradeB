@@ -181,10 +181,22 @@ async function sendOrderNotifications(order, isPickup = false, trackingNumber = 
       // PICKUP READY NOTIFICATION
       if (customerEmail) {
         try {
-          await sendStatusUpdateEmail(customerEmail, simplifiedOrder, customerName, 'Ready for Pickup');
-          console.log("✅ Pickup ready email sent to:", customerEmail);
+          const result = await sendStatusUpdateEmail(customerEmail, simplifiedOrder, customerName, 'Ready for Pickup');
+          if (result.success) {
+            console.log("✅ Pickup ready email sent to:", customerEmail);
+            console.log("✅ Email details:", {
+              messageId: result.messageId,
+              service: result.service
+            });
+          }
         } catch (emailError) {
-          console.error("❌ Failed to send pickup email:", emailError.message);
+          console.error("\n❌ ========== PICKUP EMAIL FAILED ==========");
+          console.error("❌ Order ID:", order._id);
+          console.error("❌ Customer Email:", customerEmail);
+          console.error("❌ Error Message:", emailError.message);
+          console.error("❌ Error Code:", emailError.code || 'NO_CODE');
+          console.error("❌ Full Error:", emailError);
+          console.error("❌ ========================================\n");
         }
       }
 
@@ -212,10 +224,24 @@ async function sendOrderNotifications(order, isPickup = false, trackingNumber = 
       // TRACKING NOTIFICATION  
       if (customerEmail) {
         try {
-          await sendStatusUpdateEmail(customerEmail, simplifiedOrder, customerName, 'Shipped', trackingNumber);
-          console.log("✅ Tracking email sent to:", customerEmail);
+          const result = await sendStatusUpdateEmail(customerEmail, simplifiedOrder, customerName, 'Shipped', trackingNumber);
+          if (result.success) {
+            console.log("✅ Tracking email sent to:", customerEmail);
+            console.log("✅ Email details:", {
+              messageId: result.messageId,
+              service: result.service,
+              trackingNumber: trackingNumber
+            });
+          }
         } catch (emailError) {
-          console.error("❌ Failed to send tracking email:", emailError.message);
+          console.error("\n❌ ========== TRACKING EMAIL FAILED ==========");
+          console.error("❌ Order ID:", order._id);
+          console.error("❌ Customer Email:", customerEmail);
+          console.error("❌ Tracking Number:", trackingNumber);
+          console.error("❌ Error Message:", emailError.message);
+          console.error("❌ Error Code:", emailError.code || 'NO_CODE');
+          console.error("❌ Full Error:", emailError);
+          console.error("❌ ===========================================\n");
         }
       }
 
@@ -550,13 +576,25 @@ async function sendOrderConfirmation(order) {
     const result = await sendOrderConfirmationEmail(populatedOrder, customer);
     
     if (result.success) {
-      console.log("✅ Order confirmation notification sent for order:", populatedOrder._id, result);
+      console.log("✅ Order confirmation notification sent for order:", populatedOrder._id);
+      console.log("✅ Email details:", {
+        messageId: result.messageId,
+        service: result.service,
+        to: customer.email
+      });
     } else if (result.skipped) {
       console.log("⚠️ Order confirmation skipped:", result.message);
     }
   } catch (error) {
-    console.error("❌ Failed to send order confirmation:", error.message);
-    // Don't fail the order creation if notification fails
+    // Detailed error logging
+    console.error("\n❌ ========== ORDER CONFIRMATION EMAIL FAILED ==========");
+    console.error("❌ Order ID:", populatedOrder._id);
+    console.error("❌ Customer Email:", customer.email);
+    console.error("❌ Error Message:", error.message);
+    console.error("❌ Error Code:", error.code || 'NO_CODE');
+    console.error("❌ Full Error:", error);
+    console.error("❌ =====================================================\n");
+    // Don't fail the order creation if notification fails, but log it clearly
   }
 }
 
