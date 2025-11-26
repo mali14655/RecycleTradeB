@@ -24,32 +24,45 @@ class UniversalEmailService {
     console.log(`📧 SMTP Config: ${hasSMTP ? '✅ Found' : '❌ Not set'}`);
     console.log(`📧 Gmail Config: ${hasGmail ? '✅ Found' : '❌ Not set'}`);
     
-    // Try configuration methods in order of reliability
-    // NOTE: User wants to use Gmail, so prioritize it if configured
+    // IMPORTANT: On cloud servers (Railway, Vercel, etc.), SMTP ports 587/465 are often blocked
+    // Resend uses HTTPS API and works everywhere - prioritize it for production
     const transporters = [];
     
-    // If Gmail is configured, try it first (user preference)
-    if (hasGmail) {
-      console.log('📧 Prioritizing Gmail configuration (user preference)...');
-      const gmailTransporter = this.createGmailTransporter();
-      if (gmailTransporter) transporters.push(gmailTransporter);
-    }
-    
-    // Then try other options
+    // 1. Try Resend first (works on all servers, API-based, not SMTP)
     const resendTransporter = this.createResendTransporter();
-    if (resendTransporter) transporters.push(resendTransporter);
-    
-    const smtpTransporter = this.createSMTPTransporter();
-    if (smtpTransporter) transporters.push(smtpTransporter);
-    
-    // If Gmail wasn't added yet, try it now
-    if (!hasGmail || transporters.length === 0) {
-      const gmailTransporter = this.createGmailTransporter();
-      if (gmailTransporter) transporters.push(gmailTransporter);
+    if (resendTransporter) {
+      transporters.push(resendTransporter);
+      console.log('📧 Resend transporter added (recommended for cloud servers)');
     }
     
+    // 2. Try SMTP (generic, might work on some servers)
+    const smtpTransporter = this.createSMTPTransporter();
+    if (smtpTransporter) {
+      transporters.push(smtpTransporter);
+      console.log('📧 SMTP transporter added');
+    }
+    
+    // 3. Try Gmail last (often blocked on cloud servers due to SMTP port restrictions)
+    // NOTE: Gmail SMTP (ports 587/465) is often blocked on cloud platforms
+    // If you're on Railway/Vercel/etc., Gmail SMTP will likely timeout
+    // Solution: Use Resend.com (free tier available) or enable "Less secure app access" + use OAuth2
+    if (hasGmail) {
+      console.log('📧 Attempting Gmail transporter (may fail on cloud servers due to SMTP port blocking)...');
+      const gmailTransporter = this.createGmailTransporter();
+      if (gmailTransporter) {
+        transporters.push(gmailTransporter);
+        console.log('📧 Gmail transporter added (will be tested during verification)');
+      } else {
+        console.warn('⚠️ Gmail transporter creation failed - this is normal on cloud servers that block SMTP');
+      }
+    }
+    
+    // 4. Development fallback
     const etherealTransporter = this.createEtherealTransporter();
-    if (etherealTransporter) transporters.push(etherealTransporter);
+    if (etherealTransporter) {
+      transporters.push(etherealTransporter);
+      console.log('📧 Ethereal transporter added (development only)');
+    }
 
     if (transporters.length > 0) {
       this.transporter = transporters[0];
@@ -221,9 +234,13 @@ class UniversalEmailService {
         if (errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT')) {
           console.error(`❌ Verify: Connection timeout - Gmail server not responding`);
           console.error(`❌ Verify: This usually means:`);
-          console.error(`   - Firewall blocking port 587/465`);
+          console.error(`   - Your cloud server (Railway/Vercel/etc.) is BLOCKING SMTP ports 587/465`);
+          console.error(`   - Gmail SMTP will NOT work on most cloud platforms`);
           console.error(`   - Network connectivity issues`);
-          console.error(`   - Gmail blocking the connection`);
+          console.error(`\n💡 SOLUTION: Use Resend.com (API-based, works everywhere)`);
+          console.error(`   - Sign up at https://resend.com (free tier: 3,000 emails/month)`);
+          console.error(`   - Get API key and set: RESEND_API_KEY=re_your_key`);
+          console.error(`   - See EMAIL_SETUP_GUIDE.md for details`);
         } else if (errorMsg.includes('EAUTH') || errorMsg.includes('authentication')) {
           console.error(`❌ Verify: Authentication failed - check EMAIL_USER and EMAIL_PASS`);
           console.error(`❌ Verify: Make sure you're using an App Password, not your regular password`);
