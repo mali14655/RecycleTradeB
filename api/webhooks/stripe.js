@@ -47,30 +47,27 @@ const getCustomerName = (order) => {
 };
 
 // NEW: Helper function to get API URL (works on both local and server)
-// Note: API_URL already includes /api, so we use it as-is
+// For internal server calls, always use localhost (most reliable)
 const getApiUrl = () => {
-  // If API_URL is set, use it (it already includes /api)
-  if (process.env.API_URL) {
-    return process.env.API_URL.replace(/\/$/, ''); // Remove trailing slash
+  // For internal server calls, always use localhost (most reliable)
+  // This works on both local and server environments
+  const port = process.env.PORT || 5000;
+  const baseUrl = `http://localhost:${port}`;
+  
+  // If we're in production and have a specific API URL, use it
+  // But prefer localhost for internal calls to avoid network issues
+  if (process.env.NODE_ENV === 'production' && process.env.API_URL) {
+    // Only use external URL if explicitly needed
+    const apiUrl = process.env.API_URL.replace(/\/$/, '');
+    // If API_URL points to same server, use localhost instead
+    if (apiUrl.includes('localhost') || apiUrl.includes('127.0.0.1')) {
+      return `${baseUrl}/api`;
+    }
+    return apiUrl;
   }
-  // For Railway - try internal service URL first, then public domain
-  // Need to add /api since these don't include it
-  if (process.env.RAILWAY_STATIC_URL) {
-    return `${process.env.RAILWAY_STATIC_URL.replace(/\/$/, '')}/api`;
-  }
-  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
-    return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/api`;
-  }
-  // For Vercel - add /api
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}/api`;
-  }
-  // For internal calls on same server, use localhost with /api
-  if (process.env.PORT) {
-    return `http://localhost:${process.env.PORT}/api`;
-  }
-  // Fallback - add /api
-  return `${process.env.FRONTEND_URL?.replace(/\/$/, '') || 'http://localhost:5000'}/api`;
+  
+  // Default to localhost for internal calls
+  return `${baseUrl}/api`;
 };
 
 // Stripe webhook route
@@ -157,17 +154,27 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
         };
 
         if (customer.email) {
-          const apiUrl = getApiUrl();
-          await axios.post(`${apiUrl}/notifications/send-order-confirmation`, {
-            order: populatedOrder,
-            customer: customer
-          }, {
-            timeout: 10000,
-            headers: {
-              'Content-Type': 'application/json'
+          // NEW: Lazy load the function to avoid circular dependency issues on server
+          // This ensures the module is fully loaded before we try to use it
+          try {
+            const notificationsModule = require('../../routes/notificationsRoutes');
+            const sendOrderConfirmationEmail = notificationsModule.sendOrderConfirmationEmail;
+            
+            if (!sendOrderConfirmationEmail) {
+              throw new Error('sendOrderConfirmationEmail function not found in notificationsRoutes');
             }
-          });
-          console.log('✅ Order confirmation email sent for paid order:', orderId);
+
+            const result = await sendOrderConfirmationEmail(populatedOrder, customer);
+            
+            if (result.success) {
+              console.log('✅ Order confirmation email sent for paid order:', orderId, result);
+            } else if (result.skipped) {
+              console.log('⚠️ Order confirmation skipped:', result.message);
+            }
+          } catch (emailError) {
+            console.error('❌ Failed to send order confirmation email:', emailError.message);
+            // Don't fail the webhook if email fails
+          }
         }
       } catch (emailError) {
         console.error('❌ Failed to send order confirmation email:', emailError.message);

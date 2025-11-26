@@ -257,19 +257,18 @@ router.post("/test-email", async (req, res) => {
   }
 });
 
-// 1. ORDER CONFIRMATION
-router.post("/send-order-confirmation", async (req, res) => {
-  try {
-    const { order, customer } = req.body;
+// NEW: Reusable function to send order confirmation email (can be called directly)
+const sendOrderConfirmationEmail = async (order, customer) => {
+  if (!customer.email) {
+    console.log('⚠️ No customer email provided, skipping order confirmation');
+    return { skipped: true, message: "No customer email provided" };
+  }
 
-    console.log('📧 Sending order confirmation...', {
+  try {
+    console.log('📧 Sending order confirmation email...', {
       customerEmail: customer.email,
       orderId: order._id
     });
-
-    if (!customer.email) {
-      return res.json({ message: "No customer email provided", skipped: true });
-    }
 
     const shortOrderId = getOrderShortId(order);
     
@@ -444,13 +443,31 @@ router.post("/send-order-confirmation", async (req, res) => {
       `
     });
     
-    res.json({ 
+    return {
+      success: true,
       message: "Order confirmation processed successfully",
       messageId: result.messageId,
       service: emailService.transporter?.name || 'logged'
-    });
+    };
   } catch (error) {
     console.error("❌ Error sending order confirmation:", error);
+    throw error; // Re-throw to let caller handle
+  }
+};
+
+// Route handler that uses the function above
+router.post("/send-order-confirmation", async (req, res) => {
+  try {
+    const { order, customer } = req.body;
+    const result = await sendOrderConfirmationEmail(order, customer);
+    
+    if (result.skipped) {
+      return res.json(result);
+    }
+    
+    res.json(result);
+  } catch (error) {
+    console.error("❌ Error in order confirmation route:", error);
     res.status(500).json({ 
       message: "Failed to process order confirmation", 
       error: error.message 
@@ -660,4 +677,7 @@ router.post("/send-email", async (req, res) => {
   }
 });
 
+// Export router as default
 module.exports = router;
+// Also export the function for direct use
+module.exports.sendOrderConfirmationEmail = sendOrderConfirmationEmail;

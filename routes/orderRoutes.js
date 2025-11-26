@@ -2,6 +2,7 @@ const express = require("express");
 const Stripe = require("stripe");
 const jwt = require("jsonwebtoken");
 const axios = require("axios");
+const PDFDocument = require("pdfkit");
 const Order = require("../models/Orders");
 const Product = require("../models/Product");
 const Cart = require("../models/Cart");
@@ -49,28 +50,25 @@ const getCustomerName = (order) => {
 // NEW: Helper function to get API URL (works on both local and server)
 // Note: API_URL already includes /api, so we use it as-is
 const getApiUrl = () => {
-  // If API_URL is set, use it (it already includes /api)
-  if (process.env.API_URL) {
-    return process.env.API_URL.replace(/\/$/, ''); // Remove trailing slash
+  // For internal server calls, always use localhost (most reliable)
+  // This works on both local and server environments
+  const port = process.env.PORT || 5000;
+  const baseUrl = `http://localhost:${port}`;
+  
+  // If we're in production and have a specific API URL, use it
+  // But prefer localhost for internal calls to avoid network issues
+  if (process.env.NODE_ENV === 'production' && process.env.API_URL) {
+    // Only use external URL if explicitly needed
+    const apiUrl = process.env.API_URL.replace(/\/$/, '');
+    // If API_URL points to same server, use localhost instead
+    if (apiUrl.includes('localhost') || apiUrl.includes('127.0.0.1')) {
+      return `${baseUrl}/api`;
+    }
+    return apiUrl;
   }
-  // For Railway - try internal service URL first, then public domain
-  // Need to add /api since these don't include it
-  if (process.env.RAILWAY_STATIC_URL) {
-    return `${process.env.RAILWAY_STATIC_URL.replace(/\/$/, '')}/api`;
-  }
-  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
-    return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/api`;
-  }
-  // For Vercel - add /api
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}/api`;
-  }
-  // For internal calls on same server, use localhost with /api
-  if (process.env.PORT) {
-    return `http://localhost:${process.env.PORT}/api`;
-  }
-  // Fallback - add /api
-  return `${process.env.FRONTEND_URL?.replace(/\/$/, '') || 'http://localhost:5000'}/api`;
+  
+  // Default to localhost for internal calls
+  return `${baseUrl}/api`;
 };
 
 const router = express.Router();
@@ -276,7 +274,8 @@ router.post("/stripe", async (req, res) => {
     order.stripeSessionId = session.id;
     await order.save();
 
-    await sendOrderConfirmation(order);
+    // REMOVED: Order confirmation will be sent via Stripe webhook after payment is successful
+    // This ensures confirmation is only sent when payment is actually completed
 
     console.log("Stripe session created:", session.id);
     return res.json({ url: session.url });
@@ -485,6 +484,8 @@ router.post("/:orderId/process", authMiddleware, async (req, res) => {
   }
 });
 
+// NEW: Lazy load the email function to avoid circular dependency and timing issues
+// This ensures it works reliably on servers (Vercel, Railway, etc.)
 async function sendOrderConfirmation(order) {
   try {
     // Populate order with product details before sending
@@ -505,30 +506,30 @@ async function sendOrderConfirmation(order) {
       name: getCustomerName(populatedOrder)
     };
 
-    // Convert ObjectId to string
-    const orderIdStr = populatedOrder._id.toString();
-    const shortOrderId = orderIdStr.slice(-8);
-
     console.log('📧 Attempting to send order confirmation...', {
       customerEmail: customer.email,
       orderId: populatedOrder._id
     });
 
-    // NEW: Fix email sending - Use helper function to get correct API URL
-    const apiUrl = getApiUrl();
-    const response = await axios.post(`${apiUrl}/notifications/send-order-confirmation`, {
-      order: populatedOrder,
-      customer: customer
-    }, {
-      timeout: 10000,
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
+    // NEW: Lazy load the function to avoid circular dependency issues on server
+    // This ensures the module is fully loaded before we try to use it
+    const notificationsModule = require('./notificationsRoutes');
+    const sendOrderConfirmationEmail = notificationsModule.sendOrderConfirmationEmail;
+    
+    if (!sendOrderConfirmationEmail) {
+      throw new Error('sendOrderConfirmationEmail function not found in notificationsRoutes');
+    }
 
-    console.log("✅ Order confirmation notification sent for order:", populatedOrder._id, response.data);
-  } catch (notificationError) {
-    console.error("❌ Failed to send order confirmation:", notificationError.message);
+    // Call the email function directly instead of HTTP request
+    const result = await sendOrderConfirmationEmail(populatedOrder, customer);
+    
+    if (result.success) {
+      console.log("✅ Order confirmation notification sent for order:", populatedOrder._id, result);
+    } else if (result.skipped) {
+      console.log("⚠️ Order confirmation skipped:", result.message);
+    }
+  } catch (error) {
+    console.error("❌ Failed to send order confirmation:", error.message);
     // Don't fail the order creation if notification fails
   }
 }
@@ -695,6 +696,172 @@ router.get("/track/:orderId", async (req, res) => {
   } catch (err) {
     console.error("Error tracking order:", err);
     res.status(500).json({ message: "Failed to track order" });
+  }
+});
+
+// NEW: Export processed orders to PDF
+router.get("/processed/export-pdf", authMiddleware, roleCheck(["admin", "company"]), async (req, res) => {
+  try {
+    const { orderIds } = req.query;
+    let orderIdArray = [];
+    
+    if (orderIds) {
+      if (Array.isArray(orderIds)) {
+        orderIdArray = orderIds;
+      } else if (typeof orderIds === 'string') {
+        // Handle comma-separated string
+        orderIdArray = orderIds.split(',').filter(id => id.trim());
+      } else {
+        orderIdArray = [orderIds];
+      }
+    }
+
+    // Fetch processed orders
+    let query = { orderStatus: "Processing" };
+    if (orderIdArray.length > 0) {
+      query._id = { $in: orderIdArray };
+    }
+
+    const orders = await Order.find(query)
+      .populate("items.productId", "name price")
+      .populate("items.sellerId", "name email")
+      .populate("userId", "name email phone")
+      .populate("outletId", "name location address phone")
+      .sort({ updatedAt: -1 });
+
+    if (orders.length === 0) {
+      return res.status(404).json({ message: "No processed orders found" });
+    }
+
+    // Create PDF
+    const doc = new PDFDocument({ margin: 50 });
+    const filename = `processed-orders-${Date.now()}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(20).text("Processed Orders Report", { align: "center" });
+    doc.moveDown();
+    doc.fontSize(12).text(`Generated on: ${new Date().toLocaleString()}`, { align: "center" });
+    doc.fontSize(10).text(`Total Orders: ${orders.length}`, { align: "center" });
+    doc.moveDown(2);
+
+    let yPosition = doc.y;
+    let pageNumber = 1;
+
+    orders.forEach((order, index) => {
+      // Check if we need a new page
+      if (yPosition > 700) {
+        doc.addPage();
+        yPosition = 50;
+        pageNumber++;
+      }
+
+      // Order Header
+      doc.fontSize(14).fillColor("black").text(`Order #${order._id.toString().slice(-8)}`, { continued: false });
+      doc.fontSize(10).fillColor("gray").text(`Date: ${new Date(order.createdAt).toLocaleDateString()}`, { continued: true });
+      doc.text(` | Processed: ${new Date(order.updatedAt).toLocaleDateString()}`, { continued: true });
+      doc.moveDown(0.5);
+
+      // Customer Information
+      doc.fontSize(11).fillColor("black").text("Customer Information:", { underline: true });
+      const customerName = getCustomerName(order);
+      doc.fontSize(10).fillColor("black").text(`Name: ${customerName}`);
+      
+      if (order.userId) {
+        doc.text(`Email: ${order.userId.email || "N/A"}`);
+        doc.text(`Phone: ${order.userId.phone || "N/A"}`);
+      } else if (order.guestInfo) {
+        doc.text(`Email: ${order.guestInfo.email || "N/A"}`);
+        doc.text(`Phone: ${order.guestInfo.phone || "N/A"}`);
+        if (order.guestInfo.address) {
+          doc.text(`Address: ${order.guestInfo.address}`);
+        }
+      }
+      doc.moveDown(0.5);
+
+      // Order Items
+      doc.fontSize(11).fillColor("black").text("Order Items:", { underline: true });
+      order.items.forEach((item, itemIndex) => {
+        const productName = item.productId?.name || "Product not found";
+        const sellerName = item.sellerId?.name || "Unknown Seller";
+        const quantity = item.quantity;
+        const price = item.price;
+        const itemTotal = quantity * price;
+
+        doc.fontSize(10).fillColor("black")
+          .text(`${itemIndex + 1}. ${productName}`, { continued: false })
+          .text(`   Seller: ${sellerName}`, { indent: 20 })
+          .text(`   Quantity: ${quantity} x $${price.toFixed(2)} = $${itemTotal.toFixed(2)}`, { indent: 20 });
+      });
+      doc.moveDown(0.5);
+
+      // Order Summary
+      doc.fontSize(11).fillColor("black").text("Order Summary:", { underline: true });
+      doc.fontSize(10).fillColor("black")
+        .text(`Payment Method: ${order.paymentMethod}`)
+        .text(`Delivery Method: ${order.deliveryMethod}`);
+      if (order.trackingNumber) {
+        doc.text(`Tracking Number: ${order.trackingNumber}`);
+      }
+      if (order.outletId) {
+        doc.text(`Pickup Outlet: ${order.outletId.name} - ${order.outletId.location || ""}`);
+      }
+      doc.fontSize(12).fillColor("green").text(`Total: $${order.total.toFixed(2)}`, { align: "right" });
+
+      // Separator
+      doc.moveDown(1);
+      doc.strokeColor("gray").lineWidth(0.5).moveTo(50, doc.y).lineTo(550, doc.y).stroke();
+      doc.moveDown(1);
+
+      yPosition = doc.y;
+    });
+
+    // Footer
+    doc.fontSize(8).fillColor("gray").text(`Page ${pageNumber}`, 50, doc.page.height - 50, { align: "center" });
+
+    doc.end();
+  } catch (err) {
+    console.error("Error generating PDF:", err);
+    res.status(500).json({ message: "Failed to generate PDF" });
+  }
+});
+
+// NEW: Bulk delete processed orders
+router.delete("/processed/bulk-delete", authMiddleware, roleCheck(["admin", "company"]), async (req, res) => {
+  try {
+    const { orderIds } = req.body;
+
+    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ message: "Order IDs array is required" });
+    }
+
+    // Verify all orders are processed before deleting
+    const orders = await Order.find({
+      _id: { $in: orderIds },
+      orderStatus: "Processing"
+    });
+
+    if (orders.length === 0) {
+      return res.status(404).json({ message: "No processed orders found with the provided IDs" });
+    }
+
+    // Delete the orders
+    const deleteResult = await Order.deleteMany({
+      _id: { $in: orderIds },
+      orderStatus: "Processing"
+    });
+
+    res.json({
+      message: `Successfully deleted ${deleteResult.deletedCount} processed order(s)`,
+      deletedCount: deleteResult.deletedCount
+    });
+  } catch (err) {
+    console.error("Error deleting processed orders:", err);
+    res.status(500).json({ message: "Failed to delete processed orders" });
   }
 });
 
