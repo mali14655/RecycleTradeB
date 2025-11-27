@@ -618,113 +618,111 @@ router.put("/:orderId/tracking", authMiddleware, roleCheck(["admin", "company"])
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     try {
+      // NEW: Use direct function call instead of HTTP request
+      // Lazy load the notification function to avoid circular dependency
+      const notificationsModule = require('./notificationsRoutes');
+      const sendStatusUpdateEmail = notificationsModule.sendStatusUpdateEmail;
+      
+      if (!sendStatusUpdateEmail) {
+        throw new Error('sendStatusUpdateEmail function not found in notificationsRoutes');
+      }
+
       const customerEmail = order.userId?.email || order.guestInfo?.email;
       const customerPhone = order.userId?.phone || order.guestInfo?.phone;
       const customerName = getCustomerName(order);
 
+      // Create simplified order object for email
+      const simplifiedOrder = {
+        _id: order._id,
+        outletId: order.outletId,
+        deliveryMethod: order.deliveryMethod,
+        total: order.total,
+        items: order.items || []
+      };
+
       if (order.deliveryMethod === 'delivery' && trackingNumber) {
-        const apiUrl = getApiUrl();
-        await axios.post(`${apiUrl}/notifications/send-email`, {
-          to: customerEmail,
-          subject: `Your Order is Shipped - #${order._id.slice(-8)}`,
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #10B981;">Your Order is on the Way! 🚚</h2>
-              <p>Dear ${customerName},</p>
-              <p>Your order <strong>#${order._id.slice(-8)}</strong> has been shipped and is on its way to you.</p>
-              
-              <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                <h3 style="margin-top: 0;">Tracking Information</h3>
-                <p><strong>Tracking Number:</strong> ${trackingNumber}</p>
-                <p><strong>Track Your Package:</strong> 
-                  <a href="https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}" style="color: #2563eb;">
-                    Click here to track on FedEx
-                  </a>
-                </p>
-              </div>
+        // TRACKING NOTIFICATION FOR DELIVERY
+        if (customerEmail) {
+          try {
+            const result = await sendStatusUpdateEmail(customerEmail, simplifiedOrder, customerName, 'Shipped', trackingNumber);
+            if (result.success) {
+              console.log("✅ Tracking email sent to:", customerEmail);
+              console.log("✅ Email details:", {
+                messageId: result.messageId,
+                service: result.service,
+                trackingNumber: trackingNumber
+              });
+            }
+          } catch (emailError) {
+            console.error("\n❌ ========== TRACKING EMAIL FAILED ==========");
+            console.error("❌ Order ID:", order._id);
+            console.error("❌ Customer Email:", customerEmail);
+            console.error("❌ Tracking Number:", trackingNumber);
+            console.error("❌ Error Message:", emailError.message);
+            console.error("❌ ===========================================\n");
+          }
+        }
 
-              <div style="background: #fef3c7; padding: 15px; border-radius: 8px;">
-                <h4 style="color: #D97706;">Order Details</h4>
-                <p><strong>Items:</strong></p>
-                <ul>
-                  ${order.items.map(item => `<li>${item.productId?.name} × ${item.quantity}</li>`).join('')}
-                </ul>
-                <p><strong>Total:</strong> $${order.total.toFixed(2)}</p>
-              </div>
-
-              <p style="margin-top: 30px;">Thank you for shopping with us!</p>
-              <p><strong>RecycleTrade Team</strong></p>
-            </div>
-          `
-        });
-
+        // WhatsApp notification (if route exists, otherwise skip)
         if (customerPhone) {
-          const whatsappMessage = `Your order #${order._id.slice(-8)} has been shipped! 🚚\n\nTracking Number: ${trackingNumber}\nTrack your package: https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}\n\nYour order will arrive soon!`;
-          
-          const apiUrl = getApiUrl();
-        await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
-            to: customerPhone,
-            message: whatsappMessage
-          });
+          try {
+            const apiUrl = getApiUrl();
+            const whatsappMessage = `Your order #${order._id.slice(-8)} has been shipped! 🚚\n\nTracking Number: ${trackingNumber}\nTrack your package: https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}\n\nYour order will arrive soon!`;
+            
+            await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
+              to: customerPhone,
+              message: whatsappMessage
+            }).catch(() => {
+              console.log("⚠️ WhatsApp notification skipped (route not available)");
+            });
+          } catch (whatsappError) {
+            console.log("⚠️ WhatsApp notification skipped:", whatsappError.message);
+          }
         }
 
       } else if (order.deliveryMethod === 'pickup') {
-        const apiUrl = getApiUrl();
-        await axios.post(`${apiUrl}/notifications/send-email`, {
-          to: customerEmail,
-          subject: `Your Order is Ready for Pickup - #${order._id.slice(-8)}`,
-          html: `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #10B981;">Your Order is Ready for Pickup! 🎉</h2>
-              <p>Dear ${customerName},</p>
-              <p>Your order <strong>#${order._id.slice(-8)}</strong> is ready for pickup.</p>
-              
-              <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0;">
-                <h3 style="margin-top: 0;">Pickup Location</h3>
-                <p><strong>Outlet:</strong> ${order.outletId?.name}</p>
-                <p><strong>Address:</strong> ${order.outletId?.address}</p>
-                <p><strong>Location:</strong> ${order.outletId?.location}</p>
-                ${order.outletId?.phone ? `<p><strong>Phone:</strong> ${order.outletId.phone}</p>` : ''}
-                <p><strong>Business Hours:</strong> 9:00 AM - 8:00 PM (Mon-Sun)</p>
-              </div>
+        // PICKUP READY NOTIFICATION
+        if (customerEmail) {
+          try {
+            const result = await sendStatusUpdateEmail(customerEmail, simplifiedOrder, customerName, 'Ready for Pickup');
+            if (result.success) {
+              console.log("✅ Pickup ready email sent to:", customerEmail);
+              console.log("✅ Email details:", {
+                messageId: result.messageId,
+                service: result.service
+              });
+            }
+          } catch (emailError) {
+            console.error("\n❌ ========== PICKUP EMAIL FAILED ==========");
+            console.error("❌ Order ID:", order._id);
+            console.error("❌ Customer Email:", customerEmail);
+            console.error("❌ Error Message:", emailError.message);
+            console.error("❌ ===========================================\n");
+          }
+        }
 
-              <div style="background: #fef3c7; padding: 15px; border-radius: 8px;">
-                <h4 style="color: #D97706;">What to Bring</h4>
-                <ul>
-                  <li>Order confirmation (this email or order ID)</li>
-                  <li>Valid government-issued ID</li>
-                  <li>Payment method used for the order</li>
-                </ul>
-              </div>
-
-              <div style="margin-top: 20px; padding: 15px; background: #dcfce7; border-radius: 8px;">
-                <h4 style="color: #16a34a; margin-top: 0;">Order Items</h4>
-                <ul>
-                  ${order.items.map(item => `<li><strong>${item.productId?.name}</strong> × ${item.quantity} - $${(item.price * item.quantity).toFixed(2)}</li>`).join('')}
-                </ul>
-                <p style="margin-top: 10px;"><strong>Total Amount: $${order.total.toFixed(2)}</strong></p>
-              </div>
-
-              <p style="margin-top: 30px;">We look forward to seeing you!</p>
-              <p><strong>RecycleTrade Team</strong></p>
-            </div>
-          `
-        });
-
+        // WhatsApp notification (if route exists, otherwise skip)
         if (customerPhone) {
-          const whatsappMessage = `Your order #${order._id.slice(-8)} is ready for pickup! 🎉\n\n📍 Pickup Location:\n${order.outletId?.name}\n${order.outletId?.address}\n${order.outletId?.location}\n\n🕒 Hours: 9AM-8PM (Mon-Sun)\n\nPlease bring your order confirmation and ID.\n\nWe can't wait to see you!`;
-          
-          const apiUrl = getApiUrl();
-        await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
-            to: customerPhone,
-            message: whatsappMessage
-          });
+          try {
+            const apiUrl = getApiUrl();
+            const whatsappMessage = `Your order #${order._id.slice(-8)} is ready for pickup! 🎉\n\n📍 Pickup Location:\n${order.outletId?.name}\n${order.outletId?.address}\n${order.outletId?.location}\n\n🕒 Hours: 9AM-8PM (Mon-Sun)\n\nPlease bring your order confirmation and ID.\n\nWe can't wait to see you!`;
+            
+            await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
+              to: customerPhone,
+              message: whatsappMessage
+            }).catch(() => {
+              console.log("⚠️ WhatsApp notification skipped (route not available)");
+            });
+          } catch (whatsappError) {
+            console.log("⚠️ WhatsApp notification skipped:", whatsappError.message);
+          }
         }
       }
 
-      console.log("Notifications sent for order processing");
+      console.log("✅ Notifications sent for tracking update");
     } catch (notificationError) {
-      console.error("Failed to send notifications:", notificationError);
+      console.error("❌ Failed to send notifications:", notificationError.message);
+      // Don't fail the request if notifications fail
     }
 
     res.json({ message: "Tracking number added and notifications sent successfully", order });
