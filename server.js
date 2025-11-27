@@ -48,6 +48,8 @@ app.use(
 );
 
 app.use('/api/webhooks/stripe', require('./api/webhooks/stripe'));
+// NEW: PayPal webhook route (must be before express.json() middleware)
+app.use('/api/webhooks/paypal', require('./api/webhooks/paypal'));
 // middleware for other routes (NO express.raw() for webhooks)
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());

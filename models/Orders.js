@@ -27,13 +27,14 @@ const orderSchema = new mongoose.Schema({
     },
   ],
   total: { type: Number, required: true },
-  paymentMethod: { type: String, enum: ["COD", "Stripe", "Pickup"], default: "COD" },
+  paymentMethod: { type: String, enum: ["COD", "Stripe", "PayPal", "Pickup"], default: "COD" },
   deliveryMethod: { type: String, enum: ["delivery", "pickup"], default: "delivery" },
   outletId: { type: mongoose.Schema.Types.ObjectId, ref: "Outlet" },
   paymentStatus: { type: String, enum: ["Pending", "Paid"], default: "Pending" },
   orderStatus: { type: String, enum: ["Pending", "Processing"], default: "Pending" },
   trackingNumber: { type: String },
   stripeSessionId: { type: String },
+  paypalOrderId: { type: String },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });

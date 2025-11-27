@@ -1,5 +1,6 @@
 const express = require("express");
 const Stripe = require("stripe");
+const paypal = require("@paypal/paypal-server-sdk");
 const jwt = require("jsonwebtoken");
 const axios = require("axios");
 const PDFDocument = require("pdfkit");
@@ -73,6 +74,24 @@ const getApiUrl = () => {
 
 const router = express.Router();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
+// NEW: PayPal SDK Configuration
+const paypalClientId = process.env.PAYPAL_CLIENT_ID;
+const paypalClientSecret = process.env.PAYPAL_CLIENT_SECRET;
+const paypalEnvironment = process.env.PAYPAL_ENVIRONMENT || "sandbox"; // "sandbox" or "live"
+
+// Initialize PayPal SDK
+let paypalClient = null;
+if (paypalClientId && paypalClientSecret) {
+  const environment = paypalEnvironment === "live" 
+    ? paypal.Environment.Production
+    : paypal.Environment.Sandbox;
+  paypalClient = new paypal.Client({
+    environment: environment,
+    clientId: paypalClientId,
+    clientSecret: paypalClientSecret
+  });
+}
 
 const { authMiddleware, roleCheck } = require("../middlewares/auth");
 
@@ -347,6 +366,108 @@ router.post("/stripe", async (req, res) => {
   } catch (err) {
     console.error("Stripe Checkout Error:", err);
     return res.status(500).json({ message: "Failed to create checkout session" });
+  }
+});
+
+// NEW: PayPal checkout for home delivery
+router.post("/paypal", async (req, res) => {
+  try {
+    const { items = [], guestInfo = null, deliveryMethod = "delivery", outletId = null } = req.body;
+    const userId = getUserIdFromToken(req);
+    if (!items || !items.length) return res.status(400).json({ message: "No items provided" });
+
+    if (!paypalClient) {
+      return res.status(500).json({ message: "PayPal is not configured. Please set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET in environment variables." });
+    }
+
+    console.log("PayPal checkout request:", { items, guestInfo, userId, deliveryMethod, outletId });
+
+    const total = items.reduce((s, it) => s + (it.price || 0) * (it.quantity || 1), 0);
+
+    const order = await createOrderDocument({ 
+      userId, 
+      guestInfo, 
+      items, 
+      total, 
+      paymentMethod: "PayPal",
+      deliveryMethod,
+      outletId
+    });
+
+    if (!process.env.FRONTEND_URL || !/^https?:\/\//i.test(process.env.FRONTEND_URL)) {
+      console.warn("FRONTEND_URL is missing or invalid in .env. Should include http:// or https://");
+      return res.status(500).json({ message: "Server misconfiguration: FRONTEND_URL must include http:// or https:// in .env" });
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL.replace(/\/$/, "");
+
+    // Create PayPal order using Orders API v2
+    const ordersController = new paypal.OrdersController(paypalClient);
+    
+    const orderRequest = {
+      intent: paypal.CheckoutPaymentIntent.Capture,
+      purchaseUnits: [
+        {
+          referenceId: order._id.toString(),
+          description: `Order #${order._id.toString().slice(-8)}`,
+          customId: order._id.toString(),
+          amount: {
+            currencyCode: "USD",
+            value: total.toFixed(2),
+            breakdown: {
+              itemTotal: {
+                currencyCode: "USD",
+                value: total.toFixed(2)
+              }
+            }
+          },
+          items: items.map((item) => ({
+            name: item.name,
+            description: item.name,
+            quantity: item.quantity.toString(),
+            unitAmount: {
+              currencyCode: "USD",
+              value: item.price.toFixed(2)
+            }
+          }))
+        }
+      ],
+      applicationContext: {
+        brandName: "RecycleTrade",
+        landingPage: paypal.OrderApplicationContextLandingPage.NO_PREFERENCE,
+        userAction: paypal.OrderApplicationContextUserAction.PAY_NOW,
+        returnUrl: `${frontendUrl}/success?paypal_order_id={order_id}`,
+        cancelUrl: `${frontendUrl}/cancel`
+      }
+    };
+
+    const { result, statusCode } = await ordersController.createOrder(orderRequest);
+    
+    if (statusCode !== 201) {
+      console.error("PayPal order creation failed:", result);
+      return res.status(500).json({ message: "Failed to create PayPal order" });
+    }
+
+    // Save PayPal order ID to our order
+    order.paypalOrderId = result.id;
+    await order.save();
+
+    // Find approval URL
+    const approvalUrl = result.links?.find(link => link.rel === "approve")?.href;
+    
+    if (!approvalUrl) {
+      console.error("PayPal approval URL not found:", result);
+      return res.status(500).json({ message: "Failed to get PayPal approval URL" });
+    }
+
+    console.log("PayPal order created:", result.id);
+    return res.json({ 
+      url: approvalUrl,
+      orderId: result.id 
+    });
+  } catch (err) {
+    console.error("PayPal Checkout Error:", err);
+    return res.status(500).json({ message: "Failed to create PayPal checkout session", error: err.message });
   }
 });
 

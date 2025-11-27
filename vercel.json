@@ -3,12 +3,18 @@
   "builds": [
     { "src": "server.js", "use": "@vercel/node" },
     { "src": "api/webhooks/stripe.js", "use": "@vercel/node" },
+    { "src": "api/webhooks/paypal.js", "use": "@vercel/node" },
     { "src": "api/orders/send-confirmation.js", "use": "@vercel/node" }
   ],
   "routes": [
     {
       "src": "/api/webhooks/stripe",
       "dest": "/api/webhooks/stripe.js",
+      "methods": ["POST"]
+    },
+    {
+      "src": "/api/webhooks/paypal",
+      "dest": "/api/webhooks/paypal.js",
       "methods": ["POST"]
     },
     {
