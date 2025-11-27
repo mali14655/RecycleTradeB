@@ -72,6 +72,13 @@ if (paypalClientId && paypalClientSecret) {
     clientId: paypalClientId,
     clientSecret: paypalClientSecret
   });
+  
+  // NEW: Manually set credentials on auth manager (SDK v2 bug workaround)
+  // The SDK doesn't properly transfer credentials from Client constructor to auth manager
+  if (paypalClient.clientCredentialsAuthManager) {
+    paypalClient.clientCredentialsAuthManager._oAuthClientId = paypalClientId;
+    paypalClient.clientCredentialsAuthManager._oAuthClientSecret = paypalClientSecret;
+  }
 } else {
   console.warn('⚠️ PayPal credentials not configured. PayPal webhooks will not work.');
 }

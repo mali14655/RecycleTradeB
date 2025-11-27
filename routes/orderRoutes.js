@@ -92,9 +92,18 @@ if (paypalClientId && paypalClientSecret) {
       clientId: paypalClientId,
       clientSecret: paypalClientSecret
     });
+    
+    // NEW: Manually set credentials on auth manager (SDK v2 bug workaround)
+    // The SDK doesn't properly transfer credentials from Client constructor to auth manager
+    if (paypalClient.clientCredentialsAuthManager) {
+      paypalClient.clientCredentialsAuthManager._oAuthClientId = paypalClientId;
+      paypalClient.clientCredentialsAuthManager._oAuthClientSecret = paypalClientSecret;
+    }
+    
     console.log("✅ PayPal client initialized successfully");
     console.log("✅ PayPal environment:", paypalEnvironment);
     console.log("✅ PayPal client ID:", paypalClientId ? `${paypalClientId.substring(0, 10)}...` : "NOT SET");
+    console.log("✅ PayPal auth manager configured:", paypalClient.clientCredentialsAuthManager?._oAuthClientId ? "YES" : "NO");
   } catch (error) {
     console.error("❌ Failed to initialize PayPal client:", error.message);
   }
