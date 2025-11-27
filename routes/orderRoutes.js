@@ -222,9 +222,17 @@ async function sendOrderNotifications(order, isPickup = false, trackingNumber = 
       }
     } else if (trackingNumber) {
       // TRACKING NOTIFICATION  
+      console.log("📧 TRACKING NOTIFICATION TRIGGERED");
+      console.log("📧 Tracking Number:", trackingNumber);
+      console.log("📧 Customer Email:", customerEmail);
+      console.log("📧 Simplified Order:", JSON.stringify(simplifiedOrder, null, 2));
+      
       if (customerEmail) {
         try {
+          console.log("📧 Calling sendStatusUpdateEmail...");
           const result = await sendStatusUpdateEmail(customerEmail, simplifiedOrder, customerName, 'Shipped', trackingNumber);
+          console.log("📧 sendStatusUpdateEmail result:", result);
+          
           if (result.success) {
             console.log("✅ Tracking email sent to:", customerEmail);
             console.log("✅ Email details:", {
@@ -232,6 +240,8 @@ async function sendOrderNotifications(order, isPickup = false, trackingNumber = 
               service: result.service,
               trackingNumber: trackingNumber
             });
+          } else if (result.skipped) {
+            console.log("⚠️ Tracking email skipped:", result.message);
           }
         } catch (emailError) {
           console.error("\n❌ ========== TRACKING EMAIL FAILED ==========");
@@ -240,9 +250,12 @@ async function sendOrderNotifications(order, isPickup = false, trackingNumber = 
           console.error("❌ Tracking Number:", trackingNumber);
           console.error("❌ Error Message:", emailError.message);
           console.error("❌ Error Code:", emailError.code || 'NO_CODE');
+          console.error("❌ Error Stack:", emailError.stack);
           console.error("❌ Full Error:", emailError);
           console.error("❌ ===========================================\n");
         }
+      } else {
+        console.warn("⚠️ No customer email found, skipping tracking notification");
       }
 
       // WhatsApp notification (if route exists, otherwise skip)
@@ -521,7 +534,33 @@ router.post("/:orderId/process", authMiddleware, async (req, res) => {
     order.updatedAt = Date.now();
     await order.save();
 
-    await sendOrderNotifications(order, isPickup, trackingNumber);
+    // Re-fetch order with all populated fields to ensure data is fresh
+    const updatedOrder = await Order.findById(orderId)
+      .populate("items.productId", "name price images variants")
+      .populate("items.sellerId", "name email")
+      .populate("userId", "name email phone")
+      .populate("outletId", "name location address phone")
+      .populate("guestInfo");
+
+    console.log("📧 About to send notifications...");
+    console.log("📧 Order details:", {
+      orderId: updatedOrder._id,
+      deliveryMethod: updatedOrder.deliveryMethod,
+      isPickup: isPickup,
+      trackingNumber: trackingNumber,
+      customerEmail: updatedOrder.userId?.email || updatedOrder.guestInfo?.email,
+      hasItems: !!updatedOrder.items && updatedOrder.items.length > 0,
+      itemsCount: updatedOrder.items?.length || 0
+    });
+
+    try {
+      await sendOrderNotifications(updatedOrder, isPickup, trackingNumber);
+      console.log("✅ Notifications sent successfully");
+    } catch (notificationError) {
+      console.error("❌ Failed to send notifications:", notificationError);
+      console.error("❌ Error stack:", notificationError.stack);
+      // Don't fail the request if notifications fail
+    }
 
     console.log("Order processed successfully:", orderId);
     
