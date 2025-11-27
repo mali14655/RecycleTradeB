@@ -248,7 +248,7 @@ router.post('/capture', express.json(), async (req, res) => {
 
     // Capture the PayPal order
     const ordersController = new paypal.OrdersController(paypalClient);
-    const captureRequest = {}; // Empty body for capture
+    const captureRequest = { body: {} }; // Empty body for capture
 
     const { result, statusCode } = await ordersController.captureOrder(paypalOrderId, captureRequest);
 

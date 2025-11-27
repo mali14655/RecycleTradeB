@@ -441,7 +441,7 @@ router.post("/paypal", async (req, res) => {
       }
     };
 
-    const { result, statusCode } = await ordersController.createOrder(orderRequest);
+    const { result, statusCode } = await ordersController.createOrder({ body: orderRequest });
     
     if (statusCode !== 201) {
       console.error("PayPal order creation failed:", result);
