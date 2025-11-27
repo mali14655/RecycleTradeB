@@ -83,14 +83,24 @@ const paypalEnvironment = process.env.PAYPAL_ENVIRONMENT || "sandbox"; // "sandb
 // Initialize PayPal SDK
 let paypalClient = null;
 if (paypalClientId && paypalClientSecret) {
-  const environment = paypalEnvironment === "live" 
-    ? paypal.Environment.Production
-    : paypal.Environment.Sandbox;
-  paypalClient = new paypal.Client({
-    environment: environment,
-    clientId: paypalClientId,
-    clientSecret: paypalClientSecret
-  });
+  try {
+    const environment = paypalEnvironment === "live" 
+      ? paypal.Environment.Production
+      : paypal.Environment.Sandbox;
+    paypalClient = new paypal.Client({
+      environment: environment,
+      clientId: paypalClientId,
+      clientSecret: paypalClientSecret
+    });
+    console.log("✅ PayPal client initialized successfully");
+    console.log("✅ PayPal environment:", paypalEnvironment);
+    console.log("✅ PayPal client ID:", paypalClientId ? `${paypalClientId.substring(0, 10)}...` : "NOT SET");
+  } catch (error) {
+    console.error("❌ Failed to initialize PayPal client:", error.message);
+  }
+} else {
+  console.warn("⚠️ PayPal credentials not configured. PayPal payments will not work.");
+  console.warn("⚠️ Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET in environment variables.");
 }
 
 const { authMiddleware, roleCheck } = require("../middlewares/auth");
@@ -377,7 +387,23 @@ router.post("/paypal", async (req, res) => {
     if (!items || !items.length) return res.status(400).json({ message: "No items provided" });
 
     if (!paypalClient) {
+      console.error("❌ PayPal client is not initialized");
       return res.status(500).json({ message: "PayPal is not configured. Please set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET in environment variables." });
+    }
+
+    // Verify PayPal client has credentials
+    if (!paypalClientId || !paypalClientSecret) {
+      console.error("❌ PayPal credentials are missing");
+      console.error("❌ PAYPAL_CLIENT_ID:", paypalClientId ? "SET" : "NOT SET");
+      console.error("❌ PAYPAL_CLIENT_SECRET:", paypalClientSecret ? "SET" : "NOT SET");
+      return res.status(500).json({ message: "PayPal credentials are missing. Please check your environment variables." });
+    }
+
+    // Double-check client is initialized
+    if (!paypalClient || !paypalClient.clientCredentialsAuthManager) {
+      console.error("❌ PayPal client is not properly initialized");
+      console.error("❌ Client exists:", !!paypalClient);
+      return res.status(500).json({ message: "PayPal client is not properly initialized. Please check your PayPal configuration." });
     }
 
     console.log("PayPal checkout request:", { items, guestInfo, userId, deliveryMethod, outletId });
@@ -402,6 +428,12 @@ router.post("/paypal", async (req, res) => {
     const frontendUrl = process.env.FRONTEND_URL.replace(/\/$/, "");
 
     // Create PayPal order using Orders API v2
+    console.log("Creating PayPal order with client:", {
+      hasClient: !!paypalClient,
+      clientId: paypalClientId ? `${paypalClientId.substring(0, 10)}...` : "NOT SET",
+      environment: paypalEnvironment
+    });
+    
     const ordersController = new paypal.OrdersController(paypalClient);
     
     const orderRequest = {
@@ -441,6 +473,7 @@ router.post("/paypal", async (req, res) => {
       }
     };
 
+    console.log("Calling PayPal createOrder with request body:", JSON.stringify(orderRequest, null, 2));
     const { result, statusCode } = await ordersController.createOrder({ body: orderRequest });
     
     if (statusCode !== 201) {
