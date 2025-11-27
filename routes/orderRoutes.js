@@ -824,7 +824,7 @@ router.get("/processed/export-pdf", authMiddleware, roleCheck(["admin", "company
     }
 
     const orders = await Order.find(query)
-      .populate("items.productId", "name price")
+      .populate("items.productId", "name price variants")
       .populate("items.sellerId", "name email")
       .populate("userId", "name email phone")
       .populate("outletId", "name location address phone")
@@ -895,7 +895,33 @@ router.get("/processed/export-pdf", authMiddleware, roleCheck(["admin", "company
 
         doc.fontSize(10).fillColor("black")
           .text(`${itemIndex + 1}. ${productName}`, { continued: false })
-          .text(`   Seller: ${sellerName}`, { indent: 20 })
+          .text(`   Seller: ${sellerName}`, { indent: 20 });
+
+        // Get variant details if available
+        if (item.variantId && item.productId?.variants && Array.isArray(item.productId.variants)) {
+          const variant = item.productId.variants.find(
+            v => v._id && v._id.toString() === item.variantId.toString()
+          );
+          
+          if (variant && variant.specs) {
+            // Convert specs to object if it's a Map
+            const specs = variant.specs instanceof Map 
+              ? Object.fromEntries(variant.specs) 
+              : variant.specs;
+            
+            // Display variant specs
+            const specsEntries = Object.entries(specs);
+            if (specsEntries.length > 0) {
+              doc.fontSize(9).fillColor("gray").text(`   Variant:`, { indent: 20 });
+              specsEntries.forEach(([key, value]) => {
+                doc.fontSize(9).fillColor("gray")
+                  .text(`     • ${key.charAt(0).toUpperCase() + key.slice(1)}: ${value}`, { indent: 30 });
+              });
+            }
+          }
+        }
+
+        doc.fontSize(10).fillColor("black")
           .text(`   Quantity: ${quantity} x $${price.toFixed(2)} = $${itemTotal.toFixed(2)}`, { indent: 20 });
       });
       doc.moveDown(0.5);

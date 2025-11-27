@@ -688,11 +688,11 @@ const sendOrderConfirmationEmail = async (order, customer) => {
             const specs = variant.specs instanceof Map 
               ? Object.fromEntries(variant.specs) 
               : variant.specs;
-            const specsText = Object.entries(specs)
-              .map(([key, value]) => `${key}: ${value}`)
-              .join(', ');
-            if (specsText) {
-              variantInfo = `<p style="font-size: 12px; color: #6b7280; margin: 4px 0 0 0;">${specsText}</p>`;
+            const specsEntries = Object.entries(specs);
+            if (specsEntries.length > 0) {
+              variantInfo = `<div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px;">${specsEntries.map(([key, value]) => 
+                `<span style="background: #f3f4f6; padding: 4px 8px; border-radius: 4px; font-size: 11px; color: #374151; border: 1px solid #e5e7eb;"><strong style="text-transform: capitalize;">${key}:</strong> ${value}</span>`
+              ).join('')}</div>`;
             }
           }
         }
@@ -700,7 +700,7 @@ const sendOrderConfirmationEmail = async (order, customer) => {
         return `
           <tr style="border-bottom: 1px solid #e5e7eb;">
             <td style="padding: 12px; text-align: left;">
-              <strong>${productName}</strong>
+              <strong style="display: block; margin-bottom: 4px;">${productName}</strong>
               ${variantInfo}
             </td>
             <td style="padding: 12px; text-align: center;">${quantity}</td>
@@ -888,13 +888,43 @@ const sendStatusUpdateEmail = async (to, order, customerName, status, trackingNu
       statusMessage = 'Your order status has been updated.';
     }
 
-    // Build items summary
+    // Build items summary with variant details
     let itemsSummary = '';
     if (order.items && Array.isArray(order.items)) {
       itemsSummary = order.items.map((item, index) => {
         const productName = item.productId?.name || item.name || 'Product';
         const quantity = item.quantity || 1;
-        return `<li style="margin: 5px 0;">${productName} × ${quantity}</li>`;
+        const price = item.price || 0;
+        const subtotal = price * quantity;
+        
+        // Get variant specs if available
+        let variantInfo = '';
+        if (item.variantId && item.productId?.variants) {
+          const variant = item.productId.variants.find(v => 
+            v._id?.toString() === item.variantId?.toString()
+          );
+          if (variant && variant.specs) {
+            const specs = variant.specs instanceof Map 
+              ? Object.fromEntries(variant.specs) 
+              : variant.specs;
+            const specsEntries = Object.entries(specs);
+            if (specsEntries.length > 0) {
+              variantInfo = `<div style="margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;">${specsEntries.map(([key, value]) => 
+                `<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 3px; font-size: 10px; color: #374151; border: 1px solid #e5e7eb;"><strong style="text-transform: capitalize;">${key}:</strong> ${value}</span>`
+              ).join('')}</div>`;
+            }
+          }
+        }
+        
+        return `
+          <li style="margin: 8px 0; padding: 8px; background: #f9fafb; border-radius: 4px; border-left: 3px solid ${statusColor};">
+            <div style="font-weight: 600; color: #111827;">${productName} × ${quantity}</div>
+            ${variantInfo}
+            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">
+              Price: $${price.toFixed(2)} | Subtotal: <strong>$${subtotal.toFixed(2)}</strong>
+            </div>
+          </li>
+        `;
       }).join('');
     }
 
