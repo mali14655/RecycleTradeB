@@ -8,6 +8,15 @@
       const payload = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
       const user = await User.findById(payload.id).select('-passwordHash');
       if (!user) return res.status(401).json({ message: 'Invalid token' });
+      
+      // NEW: Check if email is verified - block unverified users from accessing protected routes
+      if (!user.verified) {
+        return res.status(403).json({ 
+          message: 'Please verify your email before accessing your account.',
+          requiresVerification: true
+        });
+      }
+      
       req.user = user;
       next();
     } catch (err) {

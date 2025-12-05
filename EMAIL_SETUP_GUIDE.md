@@ -146,3 +146,4 @@ The system tries email services in this order:
 - All emails are logged even if sending fails
 - The system continues working even if email fails (won't break orders)
 
+

@@ -1088,23 +1088,58 @@ router.post("/send-email", async (req, res) => {
       });
     }
 
+    // Check if email service is configured
+    if (!emailService.isConfigured || !emailService.transporter) {
+      console.error("❌ Email service not configured");
+      return res.status(500).json({ 
+        message: "Email service is not configured",
+        error: "No email transporter available",
+        suggestion: "Set RESEND_API_KEY or EMAIL_USER/EMAIL_PASS in environment variables",
+        config: {
+          hasResend: !!process.env.RESEND_API_KEY,
+          hasSMTP: !!(process.env.SMTP_HOST && process.env.SMTP_USER),
+          hasGmail: !!(process.env.EMAIL_USER && process.env.EMAIL_PASS)
+        }
+      });
+    }
+
+    console.log(`📧 Sending email via ${emailService.transporter.name} to: ${to}`);
     const result = await emailService.sendEmail({
       to,
       subject,
       html
     });
 
-    console.log("✅ Generic email sent to:", to);
-    res.json({ 
-      message: "Email processed successfully",
-      messageId: result.messageId,
-      service: emailService.transporter?.name || 'logged'
-    });
+    if (result && result.messageId) {
+      console.log("✅ Email sent successfully to:", to);
+      console.log("✅ Message ID:", result.messageId);
+      res.json({ 
+        message: "Email processed successfully",
+        messageId: result.messageId,
+        service: emailService.transporter?.name || 'logged'
+      });
+    } else {
+      console.warn("⚠️ Email may not have been sent (no messageId returned)");
+      res.json({ 
+        message: "Email request processed (may be logged only)",
+        messageId: result?.messageId || 'logged-only',
+        service: emailService.transporter?.name || 'logged',
+        warning: "Email service may not be fully configured"
+      });
+    }
   } catch (error) {
     console.error("❌ Error sending email:", error);
+    console.error("❌ Error details:", {
+      message: error.message,
+      code: error.code,
+      response: error.response?.data
+    });
     res.status(500).json({ 
       message: "Failed to process email",
-      error: error.message 
+      error: error.message,
+      errorCode: error.code,
+      details: error.response?.data || error.message,
+      suggestion: "Check email service configuration and server logs"
     });
   }
 });
