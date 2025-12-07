@@ -1144,8 +1144,141 @@ router.post("/send-email", async (req, res) => {
   }
 });
 
+// NEW: Send order cancellation email
+const sendOrderCancellationEmail = async (to, order, customerName, reason) => {
+  if (!to) {
+    console.log('⚠️ No recipient email provided, skipping cancellation email');
+    return { skipped: true, message: "No recipient email provided" };
+  }
+
+  try {
+    const emailService = new UniversalEmailService();
+    const shortOrderId = order._id.toString().slice(-8);
+    const subject = `Order Cancelled - #${shortOrderId}`;
+    
+    // Reason messages
+    let reasonMessage = '';
+    if (reason === 'abandoned') {
+      reasonMessage = 'Your order was automatically cancelled because payment was not completed within 5 minutes.';
+    } else if (reason === 'user_cancelled' || reason === 'stripe_cancelled') {
+      reasonMessage = 'Your order was cancelled as requested.';
+    } else if (reason === 'payment_failed') {
+      reasonMessage = 'Your order was cancelled due to unsuccessful payment.';
+    } else {
+      reasonMessage = 'Your order has been cancelled.';
+    }
+
+    // Build items summary
+    let itemsSummary = '';
+    if (order.items && Array.isArray(order.items)) {
+      order.items.forEach((item, index) => {
+        const productName = item.productId?.name || 'Product';
+        const quantity = item.quantity || 1;
+        const price = item.price || 0;
+        itemsSummary += `
+          <tr>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${index + 1}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${productName}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">${quantity}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">$${price.toFixed(2)}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">$${(quantity * price).toFixed(2)}</td>
+          </tr>
+        `;
+      });
+    }
+
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff;">
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); padding: 30px; text-align: center; border-radius: 8px 8px 0 0;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Order Cancelled</h1>
+        </div>
+
+        <!-- Content -->
+        <div style="padding: 30px; border: 1px solid #e5e7eb; border-top: none;">
+          <p style="color: #374151; font-size: 16px; margin: 0 0 20px 0;">Hello ${customerName},</p>
+          
+          <p style="color: #374151; font-size: 16px; margin: 0 0 20px 0;">
+            We regret to inform you that your order <strong>#${shortOrderId}</strong> has been cancelled.
+          </p>
+
+          <div style="background: #fef2f2; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #dc2626;">
+            <h3 style="color: #dc2626; margin-top: 0;">Cancellation Details</h3>
+            <p style="color: #374151; margin: 10px 0;">${reasonMessage}</p>
+            <p style="color: #374151; margin: 15px 0 0 0;">
+              <strong>Order Total:</strong> $${order.total?.toFixed(2) || '0.00'}<br>
+              <strong>Cancelled On:</strong> ${new Date().toLocaleString()}
+            </p>
+          </div>
+
+          <h3 style="color: #111827; margin-top: 30px; margin-bottom: 15px;">Order Items:</h3>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+            <thead>
+              <tr style="background: #f9fafb;">
+                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb;">#</th>
+                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb;">Product</th>
+                <th style="padding: 12px; text-align: center; border-bottom: 2px solid #e5e7eb;">Qty</th>
+                <th style="padding: 12px; text-align: right; border-bottom: 2px solid #e5e7eb;">Price</th>
+                <th style="padding: 12px; text-align: right; border-bottom: 2px solid #e5e7eb;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsSummary}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="4" style="padding: 12px; text-align: right; font-weight: bold; border-top: 2px solid #e5e7eb;">Total:</td>
+                <td style="padding: 12px; text-align: right; font-weight: bold; border-top: 2px solid #e5e7eb;">$${order.total?.toFixed(2) || '0.00'}</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div style="background: #f0f9ff; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #0284c7;">
+            <h3 style="color: #0284c7; margin-top: 0;">What's Next?</h3>
+            <p style="color: #374151; margin: 10px 0;">
+              If you were charged for this order, the refund will be processed automatically within 5-10 business days.
+            </p>
+            <p style="color: #374151; margin: 15px 0 0 0;">
+              If you have any questions or would like to place a new order, please don't hesitate to contact our support team.
+            </p>
+          </div>
+
+          <!-- Footer -->
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            <p style="color: #6b7280; font-size: 14px; margin: 10px 0;">If you have any questions about this cancellation, please contact our support team.</p>
+            <p style="margin-top: 20px; color: #111827; font-weight: 600;">Best regards,<br><strong>RecycleTrade Team</strong></p>
+          </div>
+        </div>
+
+        <!-- Footer Bar -->
+        <div style="background: #f9fafb; padding: 20px; text-align: center; border-radius: 0 0 8px 8px; border-top: 1px solid #e5e7eb;">
+          <p style="color: #6b7280; font-size: 12px; margin: 0;">© ${new Date().getFullYear()} RecycleTrade. All rights reserved.</p>
+        </div>
+      </div>
+    `;
+
+    const result = await emailService.sendEmail({
+      to,
+      subject,
+      html: htmlContent
+    });
+
+    console.log("✅ Cancellation email sent to:", to);
+    return {
+      success: true,
+      message: "Cancellation email sent successfully",
+      messageId: result.messageId,
+      service: emailService.transporter?.name || 'logged'
+    };
+  } catch (error) {
+    console.error("❌ Error sending cancellation email:", error);
+    throw error;
+  }
+};
+
 // Export router as default
 module.exports = router;
 // Also export functions for direct use
 module.exports.sendOrderConfirmationEmail = sendOrderConfirmationEmail;
 module.exports.sendStatusUpdateEmail = sendStatusUpdateEmail;
+module.exports.sendOrderCancellationEmail = sendOrderCancellationEmail;

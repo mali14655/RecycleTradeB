@@ -10,6 +10,37 @@ router.get("/", authMiddleware, async (req, res) => {
   res.json(cart || { items: [] });
 });
 
+// Helper function to ensure product has a default variant for stock management
+// Returns the variant to use for stock management (saves the product if variant was created)
+const ensureDefaultVariant = async (product) => {
+  // If product already has variants, return the first one
+  if (product.variants && product.variants.length > 0) {
+    return product.variants[0];
+  }
+  
+  // Create a default variant for products without variants
+  const defaultVariant = {
+    specs: {},
+    price: product.price,
+    images: product.images || [],
+    sku: `${product.name.replace(/\s+/g, '').toUpperCase().slice(0, 10)}-DEFAULT`,
+    enabled: true,
+    stock: 0 // Initialize stock to 0 if not set
+  };
+  
+  // Add the default variant to the product
+  if (!product.variants) {
+    product.variants = [];
+  }
+  product.variants.push(defaultVariant);
+  
+  // Save the product to persist the new variant (needed for stock checking)
+  await product.save();
+  
+  // Return the newly created variant
+  return product.variants[product.variants.length - 1];
+};
+
 // Helper function to check stock availability
 const checkStockAvailability = async (product, variantId, requestedQuantity, existingCartQuantity = 0) => {
   // If product has variants
@@ -37,8 +68,20 @@ const checkStockAvailability = async (product, variantId, requestedQuantity, exi
     return { available: true, availableStock };
   }
   
-  // For products without variants, assume unlimited stock (backward compatibility)
-  return { available: true };
+  // For products without variants, ensure default variant exists and check its stock
+  const defaultVariant = await ensureDefaultVariant(product);
+  const totalQuantity = existingCartQuantity + requestedQuantity;
+  const availableStock = defaultVariant.stock !== undefined ? defaultVariant.stock : Infinity;
+  
+  if (totalQuantity > availableStock) {
+    return { 
+      available: false, 
+      message: `Insufficient stock. Only ${availableStock} available.`,
+      availableStock 
+    };
+  }
+  
+  return { available: true, availableStock };
 };
 
 // Add item to cart

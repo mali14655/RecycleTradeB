@@ -22,6 +22,23 @@ const PORT = process.env.PORT || 5000;
 
 connectDB();
 
+// NEW: Start cron job for abandoned orders (runs every minute)
+if (process.env.NODE_ENV !== "test") {
+  const { checkAbandonedOrders } = require("./jobs/abandonedOrders");
+  
+  // Run immediately on startup
+  setTimeout(() => {
+    checkAbandonedOrders();
+  }, 30000); // Wait 30 seconds after startup
+  
+  // Then run every minute
+  setInterval(() => {
+    checkAbandonedOrders();
+  }, 60 * 1000); // Every 60 seconds
+  
+  console.log("✅ Abandoned orders cron job started (runs every minute)");
+}
+
 // CORS configuration for production
 const allowedOrigins = [
   process.env.CLIENT_URL,

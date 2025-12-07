@@ -73,9 +73,18 @@ exports.register = async (req, res, next) => {
       return res.status(400).json({ message: "Only buyer registration is currently available" });
     }
 
+    // NEW: Check if email already exists and prevent buyers from using admin/company emails
     const existing = await User.findOne({ email });
-    if (existing)
+    if (existing) {
+      // If the existing user is an admin or company, prevent buyer registration with this email
+      if (existing.role === "admin" || existing.role === "company") {
+        return res.status(400).json({ 
+          message: "This email is already registered as an administrator. Please use a different email address." 
+        });
+      }
+      // For other roles, show generic message
       return res.status(400).json({ message: "Email already registered" });
+    }
 
     const salt = await bcrypt.genSalt(12);
     const passwordHash = await bcrypt.hash(password, salt);

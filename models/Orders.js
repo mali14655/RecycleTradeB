@@ -30,8 +30,10 @@ const orderSchema = new mongoose.Schema({
   paymentMethod: { type: String, enum: ["COD", "Stripe", "Pickup"], default: "COD" },
   deliveryMethod: { type: String, enum: ["delivery", "pickup"], default: "delivery" },
   outletId: { type: mongoose.Schema.Types.ObjectId, ref: "Outlet" },
-  paymentStatus: { type: String, enum: ["Pending", "Paid"], default: "Pending" },
-  orderStatus: { type: String, enum: ["Pending", "Processing"], default: "Pending" },
+  paymentStatus: { type: String, enum: ["Pending", "Paid", "Failed", "Cancelled"], default: "Pending" },
+  orderStatus: { type: String, enum: ["Pending", "Processing", "Cancelled"], default: "Pending" },
+  cancelledAt: { type: Date },
+  cancellationReason: { type: String }, // "abandoned", "user_cancelled", "payment_failed", "stripe_cancelled"
   trackingNumber: { type: String },
   stripeSessionId: { type: String },
   createdAt: { type: Date, default: Date.now },

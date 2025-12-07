@@ -86,6 +86,34 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
   try {
     await connectDB();
 
+    // NEW: Handle payment failed events
+    if (event.type === 'checkout.session.async_payment_failed' || 
+        event.type === 'payment_intent.payment_failed') {
+      const session = event.data.object;
+      const orderId = session.metadata?.orderId || session.client_reference_id;
+
+      if (orderId) {
+        const order = await Order.findById(orderId);
+        if (order && order.paymentStatus === 'Pending' && order.orderStatus !== 'Cancelled') {
+          // Import cancel order function
+          const orderRoutes = require('../../routes/orderRoutes');
+          const cancelOrder = orderRoutes.cancelOrder;
+          
+          if (cancelOrder) {
+            // Cancel order (will recover stock and send email)
+            // Set payment status to Failed before cancelling
+            order.paymentStatus = 'Failed';
+            await order.save();
+            
+            await cancelOrder(order, 'payment_failed');
+            console.log(`✅ Order ${orderId} cancelled due to payment failure`);
+          } else {
+            console.error('❌ cancelOrder function not found');
+          }
+        }
+      }
+    }
+
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const orderId = session.metadata?.orderId || session.client_reference_id;
@@ -95,41 +123,11 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
       const order = await Order.findById(orderId);
       if (!order) return res.status(404).json({ error: 'Order not found' });
 
+      // NEW: Stock was already decreased when order was created
+      // Just update payment status - stock is already reserved
       order.paymentStatus = 'Paid';
       await order.save();
-
-      // NEW: Stock management - Decrease stock when payment is confirmed
-      try {
-        console.log('Decreasing stock for paid order:', orderId);
-        for (const item of order.items) {
-          const product = await Product.findById(item.productId);
-          if (!product) {
-            console.warn(`Product not found for item: ${item.productId}`);
-            continue;
-          }
-
-          // If product has variants and item has variantId
-          if (product.variants && product.variants.length > 0 && item.variantId) {
-            const variant = product.variants.find(v => v._id.toString() === item.variantId.toString());
-            if (variant) {
-              // Decrease stock for the variant
-              const currentStock = variant.stock !== undefined ? variant.stock : 0;
-              const newStock = Math.max(0, currentStock - item.quantity);
-              variant.stock = newStock;
-              console.log(`Decreased stock for variant ${item.variantId}: ${currentStock} -> ${newStock}`);
-            } else {
-              console.warn(`Variant not found: ${item.variantId} for product: ${item.productId}`);
-            }
-          }
-          // For products without variants, stock is not managed (backward compatibility)
-          
-          await product.save();
-        }
-        console.log('✅ Stock decreased successfully for order:', orderId);
-      } catch (stockError) {
-        console.error('❌ Error decreasing stock:', stockError);
-        // Don't fail the webhook if stock update fails, but log it
-      }
+      console.log('✅ Order payment confirmed:', orderId);
 
       if (order.userId) await Cart.deleteOne({ userId: order.userId });
 

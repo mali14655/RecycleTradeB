@@ -88,6 +88,34 @@ function getUserIdFromToken(req) {
   }
 }
 
+// NEW: Helper function to ensure product has a default variant for stock management
+// Returns the variant to use for stock management (doesn't save the product)
+function ensureDefaultVariant(product) {
+  // If product already has variants, return the first one
+  if (product.variants && product.variants.length > 0) {
+    return product.variants[0];
+  }
+  
+  // Create a default variant for products without variants
+  const defaultVariant = {
+    specs: {},
+    price: product.price,
+    images: product.images || [],
+    sku: `${product.name.replace(/\s+/g, '').toUpperCase().slice(0, 10)}-DEFAULT`,
+    enabled: true,
+    stock: 0 // Initialize stock to 0 if not set
+  };
+  
+  // Add the default variant to the product (will be saved later)
+  if (!product.variants) {
+    product.variants = [];
+  }
+  product.variants.push(defaultVariant);
+  
+  // Return the newly created variant
+  return product.variants[product.variants.length - 1];
+}
+
 // NEW: Stock management - Decrease stock for order items
 async function decreaseOrderStock(order) {
   try {
@@ -100,20 +128,30 @@ async function decreaseOrderStock(order) {
         continue;
       }
 
-      // If product has variants and item has variantId
+      let variant = null;
+      
+      // If product has variants and item has variantId, find the variant
       if (product.variants && product.variants.length > 0 && item.variantId) {
-        const variant = product.variants.find(v => v._id.toString() === item.variantId.toString());
-        if (variant) {
-          // Decrease stock for the variant
-          const currentStock = variant.stock !== undefined ? variant.stock : 0;
-          const newStock = Math.max(0, currentStock - item.quantity);
-          variant.stock = newStock;
-          console.log(`Decreased stock for variant ${item.variantId}: ${currentStock} -> ${newStock}`);
-        } else {
+        variant = product.variants.find(v => v._id.toString() === item.variantId.toString());
+        if (!variant) {
           console.warn(`Variant not found: ${item.variantId} for product: ${item.productId}`);
         }
       }
-      // For products without variants, stock is not managed (backward compatibility)
+      
+      // If no variant found (product without variants or variantId not provided)
+      // Ensure product has a default variant and use it
+      if (!variant) {
+        variant = ensureDefaultVariant(product);
+        console.log(`Using default variant for non-variant product: ${product._id}`);
+      }
+      
+      // Decrease stock for the variant
+      if (variant) {
+        const currentStock = variant.stock !== undefined ? variant.stock : 0;
+        const newStock = Math.max(0, currentStock - item.quantity);
+        variant.stock = newStock;
+        console.log(`Decreased stock for variant ${variant._id}: ${currentStock} -> ${newStock} (quantity: ${item.quantity})`);
+      }
       
       await product.save();
     }
@@ -121,6 +159,118 @@ async function decreaseOrderStock(order) {
     console.log("Stock decreased successfully for order:", order._id);
   } catch (error) {
     console.error("Error decreasing stock for order:", error);
+    throw error;
+  }
+}
+
+// NEW: Stock recovery - Recover stock when order is cancelled
+async function recoverOrderStock(order) {
+  try {
+    console.log("Recovering stock for cancelled order:", order._id);
+    
+    for (const item of order.items) {
+      const product = await Product.findById(item.productId);
+      if (!product) {
+        console.warn(`Product not found for item: ${item.productId}`);
+        continue;
+      }
+
+      let variant = null;
+      
+      // If product has variants and item has variantId, find the variant
+      if (product.variants && product.variants.length > 0 && item.variantId) {
+        variant = product.variants.find(v => v._id.toString() === item.variantId.toString());
+        if (!variant) {
+          console.warn(`Variant not found: ${item.variantId} for product: ${item.productId}`);
+        }
+      }
+      
+      // If no variant found, use default variant
+      if (!variant) {
+        variant = ensureDefaultVariant(product);
+      }
+      
+      // Recover stock for the variant
+      if (variant) {
+        const currentStock = variant.stock !== undefined ? variant.stock : 0;
+        const newStock = currentStock + item.quantity;
+        variant.stock = newStock;
+        console.log(`Recovered stock for variant ${variant._id}: ${currentStock} -> ${newStock} (quantity: ${item.quantity})`);
+      }
+      
+      await product.save();
+    }
+    
+    console.log("Stock recovered successfully for order:", order._id);
+  } catch (error) {
+    console.error("Error recovering stock for order:", error);
+    throw error;
+  }
+}
+
+// NEW: Cancel order function with stock recovery and email
+async function cancelOrder(order, reason = 'user_cancelled') {
+  try {
+    console.log(`Cancelling order ${order._id} - Reason: ${reason}`);
+    
+    // Check if already cancelled
+    if (order.orderStatus === 'Cancelled') {
+      console.log(`Order ${order._id} is already cancelled`);
+      return order;
+    }
+    
+    // Update order status
+    order.orderStatus = 'Cancelled';
+    if (order.paymentStatus === 'Pending') {
+      order.paymentStatus = 'Cancelled';
+    } else if (order.paymentStatus !== 'Paid') {
+      order.paymentStatus = 'Failed';
+    }
+    order.cancelledAt = new Date();
+    order.cancellationReason = reason;
+    await order.save();
+    
+    // Recover stock
+    await recoverOrderStock(order);
+    
+    // Send cancellation email
+    try {
+      const populatedOrder = await Order.findById(order._id)
+        .populate("items.productId", "name price images variants")
+        .populate("items.sellerId", "name email")
+        .populate("outletId", "name location address phone email")
+        .populate("userId", "name email phone")
+        .lean();
+
+      const customer = populatedOrder.userId ? {
+        email: populatedOrder.userId.email,
+        phone: populatedOrder.userId.phone,
+        name: populatedOrder.userId.name
+      } : {
+        email: populatedOrder.guestInfo?.email,
+        phone: populatedOrder.guestInfo?.phone,
+        name: getCustomerName(populatedOrder)
+      };
+
+      if (customer.email) {
+        const notificationsModule = require('./notificationsRoutes');
+        const sendOrderCancellationEmail = notificationsModule.sendOrderCancellationEmail;
+        
+        if (sendOrderCancellationEmail) {
+          // Fix: Parameters are (to, order, customerName, reason)
+          await sendOrderCancellationEmail(customer.email, populatedOrder, customer.name, reason);
+          console.log(`✅ Cancellation email sent for order: ${order._id}`);
+        }
+      }
+    } catch (emailError) {
+      console.error('❌ Failed to send cancellation email:', emailError.message);
+      // Don't fail cancellation if email fails
+    }
+    
+    console.log(`✅ Order ${order._id} cancelled successfully`);
+    return order;
+  } catch (error) {
+    console.error(`❌ Error cancelling order ${order._id}:`, error);
     throw error;
   }
 }
@@ -147,6 +297,20 @@ async function createOrderDocument({ userId, guestInfo, items, total, paymentMet
   });
   await order.save();
   console.log("Order created:", order._id);
+  
+  // NEW: Decrease stock immediately when order is created (not waiting for payment)
+  if (paymentMethod === "Stripe") {
+    try {
+      await decreaseOrderStock(order);
+      console.log("✅ Stock decreased for pending Stripe order:", order._id);
+    } catch (stockError) {
+      console.error("❌ Failed to decrease stock for order:", stockError);
+      // If stock decrease fails, cancel the order
+      await cancelOrder(order, 'stock_unavailable');
+      throw new Error("Failed to reserve stock for order");
+    }
+  }
+  
   return order;
 }
 
@@ -286,6 +450,35 @@ async function sendOrderNotifications(order, isPickup = false, trackingNumber = 
     // Don't fail the order processing if notifications fail
   }
 }
+// NEW: Handle Stripe cancel URL - cancel order when user clicks back/cancel
+router.get("/stripe-cancel", async (req, res) => {
+  try {
+    const { session_id } = req.query;
+    if (!session_id) {
+      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/cancel?error=no_session`);
+    }
+
+    // Get session from Stripe to find order
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+    const orderId = session.metadata?.orderId || session.client_reference_id;
+
+    if (orderId) {
+      const order = await Order.findById(orderId);
+      if (order && order.paymentStatus === 'Pending' && order.orderStatus !== 'Cancelled') {
+        // Cancel the order and recover stock
+        await cancelOrder(order, 'stripe_cancelled');
+        console.log(`✅ Order ${orderId} cancelled due to Stripe cancel`);
+      }
+    }
+
+    // Redirect to cancel page
+    return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/cancel?session_id=${session_id}`);
+  } catch (err) {
+    console.error("Stripe cancel handler error:", err);
+    return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/cancel?error=processing_failed`);
+  }
+});
+
 // Stripe checkout for home delivery
 router.post("/stripe", async (req, res) => {
   try {
@@ -324,12 +517,24 @@ router.post("/stripe", async (req, res) => {
       return res.status(500).json({ message: "Server misconfiguration: FRONTEND_URL must include http:// or https:// in .env" });
     }
 
+    // Build cancel URL - use backend URL (not frontend) since it's a backend route
+    let cancelUrlBase;
+    if (process.env.API_URL) {
+      // If API_URL is set, remove /api suffix if present, then add /api/orders/stripe-cancel
+      cancelUrlBase = process.env.API_URL.replace(/\/api\/?$/, '').replace(/\/$/, '');
+    } else {
+      // Fallback to localhost with port
+      const port = process.env.PORT || 5000;
+      cancelUrlBase = `http://localhost:${port}`;
+    }
+    const cancelUrl = `${cancelUrlBase}/api/orders/stripe-cancel?session_id={CHECKOUT_SESSION_ID}`;
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "payment",
       line_items: lineItems,
       success_url: `${process.env.FRONTEND_URL.replace(/\/$/, "")}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL.replace(/\/$/, "")}/cancel`,
+      cancel_url: cancelUrl,
       metadata: {
         orderId: order._id.toString()
       },
@@ -338,9 +543,6 @@ router.post("/stripe", async (req, res) => {
 
     order.stripeSessionId = session.id;
     await order.save();
-
-    // REMOVED: Order confirmation will be sent via Stripe webhook after payment is successful
-    // This ensures confirmation is only sent when payment is actually completed
 
     console.log("Stripe session created:", session.id);
     return res.json({ url: session.url });
@@ -471,6 +673,23 @@ router.get("/all", authMiddleware, roleCheck(["admin","company"]), async (req, r
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch all orders" });
+  }
+});
+
+// NEW: Get cancelled orders for admin
+router.get("/cancelled", authMiddleware, roleCheck(["admin","company"]), async (req, res) => {
+  try {
+    console.log("Fetching cancelled orders for admin");
+    const orders = await Order.find({ orderStatus: "Cancelled" })
+      .populate("items.productId", "name price images variants")
+      .populate("items.sellerId", "name email")
+      .populate("userId", "name email phone")
+      .populate("outletId", "name location address phone")
+      .sort({ cancelledAt: -1, createdAt: -1 });
+    res.json(orders);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch cancelled orders" });
   }
 });
 
@@ -991,5 +1210,10 @@ router.delete("/processed/bulk-delete", authMiddleware, roleCheck(["admin", "com
     res.status(500).json({ message: "Failed to delete processed orders" });
   }
 });
+
+// Export router as default, but also attach functions to it
+router.cancelOrder = cancelOrder;
+router.recoverOrderStock = recoverOrderStock;
+router.decreaseOrderStock = decreaseOrderStock;
 
 module.exports = router;
