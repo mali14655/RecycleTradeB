@@ -10,6 +10,9 @@ router.post('/register', [
   body('password').isLength({ min: 6 })
 ], authController.register);
 
+// NEW: Dedicated admin login route to isolate admin authentication flow
+router.post('/admin/login', authController.adminLogin);
+
 router.post('/login', authController.login);
 router.post('/refresh', authController.refreshToken);
 router.post('/logout', authController.logout);

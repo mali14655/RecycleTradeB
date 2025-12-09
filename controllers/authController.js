@@ -14,6 +14,9 @@ const createRefreshToken = (user, rememberMe = false) =>
     expiresIn: rememberMe ? "30d" : "7d",
   });
 
+// NEW: Normalize email to enforce uniqueness and consistent lookups
+const normalizeEmail = (email = "") => email.trim().toLowerCase();
+
 // NEW: Helper function to send email via notifications service
 const sendEmail = async (to, subject, html) => {
   try {
@@ -67,6 +70,7 @@ exports.register = async (req, res, next) => {
       return res.status(400).json({ errors: errors.array() });
 
     const { name, email, password, phone, role } = req.body;
+    const normalizedEmail = normalizeEmail(email);
     
     // NEW: Only allow buyer registration for now
     if (role && role !== "buyer") {
@@ -74,7 +78,7 @@ exports.register = async (req, res, next) => {
     }
 
     // NEW: Check if email already exists and prevent buyers from using admin/company emails
-    const existing = await User.findOne({ email });
+    const existing = await User.findOne({ email: normalizedEmail });
     if (existing) {
       // If the existing user is an admin or company, prevent buyer registration with this email
       if (existing.role === "admin" || existing.role === "company") {
@@ -95,7 +99,7 @@ exports.register = async (req, res, next) => {
 
     const user = new User({
       name,
-      email,
+      email: normalizedEmail,
       phone,
       passwordHash,
       role: "buyer", // NEW: Force buyer role
@@ -201,10 +205,17 @@ exports.register = async (req, res, next) => {
 exports.login = async (req, res, next) => {
   try {
     const { email, password, rememberMe } = req.body;
+    const normalizedEmail = normalizeEmail(email);
     
     // Fetch user from database
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) return res.status(400).json({ message: "Invalid credentials" });
+    
+    // NEW: Prevent admin credentials from being used on the public login route
+    if (user.role === "admin") {
+      console.log(`[LOGIN] ❌ BLOCKED: Admin attempted client login for ${normalizedEmail}`);
+      return res.status(400).json({ message: "User not registered" });
+    }
     
     // NEW: Check verification FIRST (before password check) - better UX
     // Log for debugging
@@ -262,6 +273,57 @@ exports.login = async (req, res, next) => {
         email: user.email,
         role: user.role,
         verified: user.verified,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// NEW: Dedicated admin login endpoint to isolate admin authentication
+exports.adminLogin = async (req, res, next) => {
+  try {
+    const { email, password, rememberMe } = req.body;
+    const normalizedEmail = normalizeEmail(email);
+
+    const adminUser = await User.findOne({ email: normalizedEmail, role: "admin" });
+    if (!adminUser) {
+      console.log(`[ADMIN-LOGIN] ❌ Unknown admin email attempt: ${normalizedEmail}`);
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const isMatch = await bcrypt.compare(password, adminUser.passwordHash);
+    if (!isMatch) {
+      console.log(`[ADMIN-LOGIN] ❌ Invalid password for admin email: ${normalizedEmail}`);
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    if (adminUser.verified !== true) {
+      console.log(`[ADMIN-LOGIN] ❌ Admin account not verified: ${normalizedEmail}`);
+      return res.status(403).json({ message: "Admin account not verified" });
+    }
+
+    const accessToken = createAccessToken(adminUser, rememberMe);
+    const refreshToken = createRefreshToken(adminUser, rememberMe);
+
+    const cookieOptions = {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: rememberMe
+        ? 30 * 24 * 60 * 60 * 1000
+        : 7 * 24 * 60 * 60 * 1000,
+    };
+
+    res.cookie("refreshToken", refreshToken, cookieOptions);
+    res.json({
+      accessToken,
+      user: {
+        id: adminUser._id,
+        name: adminUser.name,
+        email: adminUser.email,
+        role: adminUser.role,
+        verified: adminUser.verified,
       },
     });
   } catch (err) {
@@ -592,7 +654,11 @@ exports.resetPassword = async (req, res, next) => {
     user.resetPasswordExpiry = undefined;
     await user.save();
 
-    res.json({ message: "Password reset successfully! You can now log in with your new password." });
+    // NEW: Return user role so frontend can redirect to correct login page
+    res.json({ 
+      message: "Password reset successfully! You can now log in with your new password.",
+      userRole: user.role // NEW: Include role for proper redirect
+    });
   } catch (err) {
     next(err);
   }
