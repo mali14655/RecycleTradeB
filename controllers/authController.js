@@ -398,11 +398,37 @@ exports.verifyEmail = async (req, res, next) => {
       return res.status(400).json({ message: "Verification token is required" });
     }
 
-    // Try to find user with exact token match
+    // NEW: Debug - check what tokens exist in database
+    const usersWithTokens = await User.find({ 
+      emailVerificationToken: { $exists: true, $ne: null }
+    }).select('email emailVerificationToken emailVerificationExpiry').limit(5);
+    
+    console.log('[VERIFY-EMAIL] Found', usersWithTokens.length, 'users with verification tokens');
+    if (usersWithTokens.length > 0) {
+      console.log('[VERIFY-EMAIL] Sample token from DB:', usersWithTokens[0].emailVerificationToken?.substring(0, 20) + '...');
+      console.log('[VERIFY-EMAIL] Sample token length:', usersWithTokens[0].emailVerificationToken?.length);
+      console.log('[VERIFY-EMAIL] Sample token full:', usersWithTokens[0].emailVerificationToken);
+      console.log('[VERIFY-EMAIL] Token from request:', token);
+      console.log('[VERIFY-EMAIL] Tokens match?', usersWithTokens[0].emailVerificationToken === token);
+      console.log('[VERIFY-EMAIL] Sample expiry:', new Date(usersWithTokens[0].emailVerificationExpiry).toISOString());
+      console.log('[VERIFY-EMAIL] Current time:', new Date().toISOString());
+      console.log('[VERIFY-EMAIL] Is expired?', usersWithTokens[0].emailVerificationExpiry <= Date.now());
+    }
+
+    // Try to find user with exact token match (trim whitespace)
+    const trimmedToken = token.trim();
     let user = await User.findOne({
-      emailVerificationToken: token,
+      emailVerificationToken: trimmedToken,
       emailVerificationExpiry: { $gt: Date.now() }
     });
+
+    // If not found, try without trimming
+    if (!user) {
+      user = await User.findOne({
+        emailVerificationToken: token,
+        emailVerificationExpiry: { $gt: Date.now() }
+      });
+    }
 
     // If not found, try URL-decoded token (in case email client encoded it)
     if (!user && token) {
@@ -422,11 +448,18 @@ exports.verifyEmail = async (req, res, next) => {
 
     // If still not found, check if token exists but expired
     if (!user) {
-      const expiredUser = await User.findOne({ emailVerificationToken: token });
+      let expiredUser = await User.findOne({ emailVerificationToken: trimmedToken });
+      if (!expiredUser) {
+        expiredUser = await User.findOne({ emailVerificationToken: token });
+      }
+      
       if (expiredUser) {
-        const isExpired = expiredUser.emailVerificationExpiry <= Date.now();
+        const expiryTime = expiredUser.emailVerificationExpiry instanceof Date 
+          ? expiredUser.emailVerificationExpiry.getTime() 
+          : expiredUser.emailVerificationExpiry;
+        const isExpired = expiryTime <= Date.now();
         console.error('[VERIFY-EMAIL] Token found but expired:', isExpired);
-        console.error('[VERIFY-EMAIL] Expiry time:', new Date(expiredUser.emailVerificationExpiry).toISOString());
+        console.error('[VERIFY-EMAIL] Expiry time:', new Date(expiryTime).toISOString());
         console.error('[VERIFY-EMAIL] Current time:', new Date().toISOString());
         return res.status(400).json({ 
           message: "Verification token has expired. Please request a new verification email.",
@@ -436,6 +469,7 @@ exports.verifyEmail = async (req, res, next) => {
       
       console.error('[VERIFY-EMAIL] ❌ Invalid token - not found in database');
       console.error('[VERIFY-EMAIL] Token searched:', token.substring(0, 20) + '...');
+      console.error('[VERIFY-EMAIL] Full token searched:', token);
       return res.status(400).json({ 
         message: "Invalid verification token. Please check your email link or request a new verification email.",
         invalid: true
