@@ -387,24 +387,72 @@ exports.me = async (req, res) => {
 exports.verifyEmail = async (req, res, next) => {
   try {
     const { token } = req.body;
-    if (!token) return res.status(400).json({ message: "Verification token is required" });
+    
+    console.log('[VERIFY-EMAIL] Request received');
+    console.log('[VERIFY-EMAIL] Token received:', token ? `${token.substring(0, 20)}...` : 'none');
+    console.log('[VERIFY-EMAIL] Token length:', token?.length);
+    console.log('[VERIFY-EMAIL] Request body:', JSON.stringify(req.body));
+    
+    if (!token) {
+      console.error('[VERIFY-EMAIL] ❌ No token provided');
+      return res.status(400).json({ message: "Verification token is required" });
+    }
 
-    const user = await User.findOne({
+    // Try to find user with exact token match
+    let user = await User.findOne({
       emailVerificationToken: token,
       emailVerificationExpiry: { $gt: Date.now() }
     });
 
-    if (!user) {
-      return res.status(400).json({ message: "Invalid or expired verification token" });
+    // If not found, try URL-decoded token (in case email client encoded it)
+    if (!user && token) {
+      try {
+        const decodedToken = decodeURIComponent(token);
+        if (decodedToken !== token) {
+          console.log('[VERIFY-EMAIL] Trying URL-decoded token');
+          user = await User.findOne({
+            emailVerificationToken: decodedToken,
+            emailVerificationExpiry: { $gt: Date.now() }
+          });
+        }
+      } catch (e) {
+        console.log('[VERIFY-EMAIL] Could not decode token:', e.message);
+      }
     }
+
+    // If still not found, check if token exists but expired
+    if (!user) {
+      const expiredUser = await User.findOne({ emailVerificationToken: token });
+      if (expiredUser) {
+        const isExpired = expiredUser.emailVerificationExpiry <= Date.now();
+        console.error('[VERIFY-EMAIL] Token found but expired:', isExpired);
+        console.error('[VERIFY-EMAIL] Expiry time:', new Date(expiredUser.emailVerificationExpiry).toISOString());
+        console.error('[VERIFY-EMAIL] Current time:', new Date().toISOString());
+        return res.status(400).json({ 
+          message: "Verification token has expired. Please request a new verification email.",
+          expired: true
+        });
+      }
+      
+      console.error('[VERIFY-EMAIL] ❌ Invalid token - not found in database');
+      console.error('[VERIFY-EMAIL] Token searched:', token.substring(0, 20) + '...');
+      return res.status(400).json({ 
+        message: "Invalid verification token. Please check your email link or request a new verification email.",
+        invalid: true
+      });
+    }
+
+    console.log('[VERIFY-EMAIL] ✅ Valid token found for user:', user.email);
 
     user.verified = true;
     user.emailVerificationToken = undefined;
     user.emailVerificationExpiry = undefined;
     await user.save();
 
+    console.log('[VERIFY-EMAIL] ✅ Email verified successfully for:', user.email);
     res.json({ message: "Email verified successfully! You can now log in." });
   } catch (err) {
+    console.error('[VERIFY-EMAIL] ❌ Error:', err);
     next(err);
   }
 };
