@@ -8,7 +8,33 @@ const Cart = require('../../models/Cart');
 const Product = require('../../models/Product');
 
 // Helper function to get customer name properly - removes duplicates
+// Always prioritizes guestInfo (form data) over userId
 const getCustomerName = (order) => {
+  // First, try to get name from guestInfo (form data)
+  const firstName = (order.guestInfo?.firstName || '').trim();
+  const lastName = (order.guestInfo?.lastName || '').trim();
+  
+  if (firstName || lastName) {
+    // Remove duplicates within firstName or lastName
+    const cleanFirstName = firstName ? firstName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
+    const cleanLastName = lastName ? lastName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
+    
+    if (cleanFirstName && cleanLastName) {
+      // If firstName already contains lastName, just return firstName
+      if (cleanFirstName.toLowerCase().includes(cleanLastName.toLowerCase())) {
+        return cleanFirstName;
+      }
+      // If lastName already contains firstName, just return lastName
+      if (cleanLastName.toLowerCase().includes(cleanFirstName.toLowerCase())) {
+        return cleanLastName;
+      }
+      // Normal case: combine them with a space
+      return `${cleanFirstName} ${cleanLastName}`;
+    }
+    return cleanFirstName || cleanLastName || 'Guest Customer';
+  }
+  
+  // Fallback to userId name only if no guestInfo exists
   if (order.userId?.name) {
     // Clean up user name if it has duplicates
     const name = (order.userId.name || '').trim();
@@ -24,26 +50,8 @@ const getCustomerName = (order) => {
     }
     return name;
   }
-  const firstName = (order.guestInfo?.firstName || '').trim();
-  const lastName = (order.guestInfo?.lastName || '').trim();
   
-  // Remove duplicates within firstName or lastName
-  const cleanFirstName = firstName ? firstName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
-  const cleanLastName = lastName ? lastName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
-  
-  if (cleanFirstName && cleanLastName) {
-    // If firstName already contains lastName, just return firstName
-    if (cleanFirstName.toLowerCase().includes(cleanLastName.toLowerCase())) {
-      return cleanFirstName;
-    }
-    // If lastName already contains firstName, just return lastName
-    if (cleanLastName.toLowerCase().includes(cleanFirstName.toLowerCase())) {
-      return cleanLastName;
-    }
-    // Normal case: combine them with a space
-    return `${cleanFirstName} ${cleanLastName}`;
-  }
-  return cleanFirstName || cleanLastName || 'Guest Customer';
+  return 'Guest Customer';
 };
 
 // NEW: Helper function to get API URL (works on both local and server)
@@ -141,15 +149,22 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
           .populate("userId", "name email phone")
           .lean();
 
-        const customer = populatedOrder.userId ? {
+        // Always prioritize guestInfo (form data) for customer contact details
+        // userId is only for order tracking/profile, not for shipping/contact info
+        const customer = populatedOrder.guestInfo ? {
+          email: populatedOrder.guestInfo.email,
+          phone: populatedOrder.guestInfo.phone,
+          name: getCustomerName(populatedOrder)
+        } : (populatedOrder.userId ? {
+          // Fallback to userId only if no guestInfo exists
           email: populatedOrder.userId.email,
           phone: populatedOrder.userId.phone,
           name: populatedOrder.userId.name
         } : {
-          email: populatedOrder.guestInfo?.email,
-          phone: populatedOrder.guestInfo?.phone,
-          name: getCustomerName(populatedOrder)
-        };
+          email: null,
+          phone: null,
+          name: 'Guest Customer'
+        });
 
         if (customer.email) {
           // NEW: Lazy load the function to avoid circular dependency issues on server

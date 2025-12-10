@@ -3,7 +3,18 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const Product = require('../models/Product');
 
 // Helper function to get customer name
+// Always prioritizes guestInfo (form data) over userId
 const getCustomerName = (order) => {
+  // First, try to get name from guestInfo (form data)
+  const firstName = (order.guestInfo?.firstName || '').trim();
+  const lastName = (order.guestInfo?.lastName || '').trim();
+  
+  if (firstName || lastName) {
+    if (firstName && lastName) return `${firstName} ${lastName}`;
+    return firstName || lastName || 'Guest Customer';
+  }
+  
+  // Fallback to userId name only if no guestInfo exists
   if (order.userId?.name) {
     const name = (order.userId.name || '').trim();
     if (name) {
@@ -18,10 +29,8 @@ const getCustomerName = (order) => {
     }
     return name;
   }
-  const firstName = (order.guestInfo?.firstName || '').trim();
-  const lastName = (order.guestInfo?.lastName || '').trim();
-  if (firstName && lastName) return `${firstName} ${lastName}`;
-  return firstName || lastName || 'Guest Customer';
+  
+  return 'Guest Customer';
 };
 
 // Import cancel order function from orderRoutes
@@ -107,15 +116,22 @@ try {
           .populate("userId", "name email phone")
           .lean();
 
-        const customer = populatedOrder.userId ? {
+        // Always prioritize guestInfo (form data) for customer contact details
+        // userId is only for order tracking/profile, not for shipping/contact info
+        const customer = populatedOrder.guestInfo ? {
+          email: populatedOrder.guestInfo.email,
+          phone: populatedOrder.guestInfo.phone,
+          name: getCustomerName(populatedOrder)
+        } : (populatedOrder.userId ? {
+          // Fallback to userId only if no guestInfo exists
           email: populatedOrder.userId.email,
           phone: populatedOrder.userId.phone,
           name: populatedOrder.userId.name
         } : {
-          email: populatedOrder.guestInfo?.email,
-          phone: populatedOrder.guestInfo?.phone,
-          name: getCustomerName(populatedOrder)
-        };
+          email: null,
+          phone: null,
+          name: 'Guest Customer'
+        });
 
         if (customer.email) {
           try {

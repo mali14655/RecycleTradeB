@@ -704,8 +704,8 @@ const sendOrderConfirmationEmail = async (order, customer) => {
               ${variantInfo}
             </td>
             <td style="padding: 12px; text-align: center;">${quantity}</td>
-            <td style="padding: 12px; text-align: right;">$${price.toFixed(2)}</td>
-            <td style="padding: 12px; text-align: right; font-weight: bold;">$${subtotal.toFixed(2)}</td>
+            <td style="padding: 12px; text-align: right;">€${price.toFixed(2)}</td>
+            <td style="padding: 12px; text-align: right; font-weight: bold;">€${subtotal.toFixed(2)}</td>
           </tr>
         `;
       }).join('');
@@ -799,7 +799,7 @@ const sendOrderConfirmationEmail = async (order, customer) => {
                 <tfoot>
                   <tr style="background: #f9fafb; border-top: 2px solid #e5e7eb;">
                     <td colspan="3" style="padding: 15px; text-align: right; font-weight: 600; color: #374151;">Total:</td>
-                    <td style="padding: 15px; text-align: right; font-weight: bold; font-size: 18px; color: #111827;">$${order.total?.toFixed(2) || '0.00'}</td>
+                    <td style="padding: 15px; text-align: right; font-weight: bold; font-size: 18px; color: #111827;">€${order.total?.toFixed(2) || '0.00'}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -921,7 +921,7 @@ const sendStatusUpdateEmail = async (to, order, customerName, status, trackingNu
             <div style="font-weight: 600; color: #111827;">${productName} × ${quantity}</div>
             ${variantInfo}
             <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">
-              Price: $${price.toFixed(2)} | Subtotal: <strong>$${subtotal.toFixed(2)}</strong>
+              Price: €${price.toFixed(2)} | Subtotal: <strong>€${subtotal.toFixed(2)}</strong>
             </div>
           </li>
         `;
@@ -964,9 +964,10 @@ const sendStatusUpdateEmail = async (to, order, customerName, status, trackingNu
               </tr>
               <tr>
                 <td colspan="2" style="padding: 10px 0; text-align: center;">
-                  <a href="https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}" 
+                  <a href="https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}" 
+                     target="_blank"
                      style="display: inline-block; background: ${statusColor}; color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: 600; margin-top: 10px;">
-                    Track Your Package
+                    Track Your Package with DHL
                   </a>
                 </td>
               </tr>
@@ -984,7 +985,7 @@ const sendStatusUpdateEmail = async (to, order, customerName, status, trackingNu
             <ul style="margin: 10px 0; padding-left: 20px; color: #374151;">
               ${itemsSummary}
             </ul>
-            <p style="margin: 15px 0 0 0; font-weight: 600; color: #111827;">Total: $${order.total?.toFixed(2) || '0.00'}</p>
+            <p style="margin: 15px 0 0 0; font-weight: 600; color: #111827;">Total: €${order.total?.toFixed(2) || '0.00'}</p>
           </div>
           ` : ''}
     `;
@@ -994,9 +995,9 @@ const sendStatusUpdateEmail = async (to, order, customerName, status, trackingNu
       htmlContent += `
           <div style="background: #fef3c7; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #d97706;">
             <h3 style="color: #d97706; margin-top: 0;">📦 Shipping Information</h3>
-            <p style="color: #374151; margin: 10px 0;">Your order has been shipped and is on its way to you!</p>
-            <p style="color: #374151; margin: 10px 0;">You can track your package using the tracking number above.</p>
-            <p style="color: #374151; margin: 10px 0;"><strong>Expected Delivery:</strong> Please allow 3-5 business days for delivery.</p>
+            <p style="color: #374151; margin: 10px 0;">Your order has been shipped via DHL Express and is on its way to you!</p>
+            <p style="color: #374151; margin: 10px 0;">You can track your package using the tracking number above or click the "Track Your Package with DHL" button.</p>
+            <p style="color: #374151; margin: 10px 0;"><strong>Expected Delivery:</strong> Please allow 3-5 business days for delivery via DHL Express.</p>
           </div>
       `;
     } else if (status === 'Ready for Pickup') {
@@ -1180,8 +1181,8 @@ const sendOrderCancellationEmail = async (to, order, customerName, reason) => {
             <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${index + 1}</td>
             <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${productName}</td>
             <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: center;">${quantity}</td>
-            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">$${price.toFixed(2)}</td>
-            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">$${(quantity * price).toFixed(2)}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">€${price.toFixed(2)}</td>
+            <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: right;">€${(quantity * price).toFixed(2)}</td>
           </tr>
         `;
       });
@@ -1206,7 +1207,7 @@ const sendOrderCancellationEmail = async (to, order, customerName, reason) => {
             <h3 style="color: #dc2626; margin-top: 0;">Cancellation Details</h3>
             <p style="color: #374151; margin: 10px 0;">${reasonMessage}</p>
             <p style="color: #374151; margin: 15px 0 0 0;">
-              <strong>Order Total:</strong> $${order.total?.toFixed(2) || '0.00'}<br>
+              <strong>Order Total:</strong> €${order.total?.toFixed(2) || '0.00'}<br>
               <strong>Cancelled On:</strong> ${new Date().toLocaleString()}
             </p>
           </div>
@@ -1228,7 +1229,7 @@ const sendOrderCancellationEmail = async (to, order, customerName, reason) => {
             <tfoot>
               <tr>
                 <td colspan="4" style="padding: 12px; text-align: right; font-weight: bold; border-top: 2px solid #e5e7eb;">Total:</td>
-                <td style="padding: 12px; text-align: right; font-weight: bold; border-top: 2px solid #e5e7eb;">$${order.total?.toFixed(2) || '0.00'}</td>
+                <td style="padding: 12px; text-align: right; font-weight: bold; border-top: 2px solid #e5e7eb;">€${order.total?.toFixed(2) || '0.00'}</td>
               </tr>
             </tfoot>
           </table>

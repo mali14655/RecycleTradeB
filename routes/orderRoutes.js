@@ -9,7 +9,33 @@ const Cart = require("../models/Cart");
 const User = require("../models/User");
 
 // Helper function to get customer name properly - removes duplicates
+// Always prioritizes guestInfo (form data) over userId
 const getCustomerName = (order) => {
+  // First, try to get name from guestInfo (form data)
+  const firstName = (order.guestInfo?.firstName || '').trim();
+  const lastName = (order.guestInfo?.lastName || '').trim();
+  
+  if (firstName || lastName) {
+    // Remove duplicates within firstName or lastName
+    const cleanFirstName = firstName ? firstName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
+    const cleanLastName = lastName ? lastName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
+    
+    if (cleanFirstName && cleanLastName) {
+      // If firstName already contains lastName, just return firstName
+      if (cleanFirstName.toLowerCase().includes(cleanLastName.toLowerCase())) {
+        return cleanFirstName;
+      }
+      // If lastName already contains firstName, just return lastName
+      if (cleanLastName.toLowerCase().includes(cleanFirstName.toLowerCase())) {
+        return cleanLastName;
+      }
+      // Normal case: combine them with a space
+      return `${cleanFirstName} ${cleanLastName}`;
+    }
+    return cleanFirstName || cleanLastName || 'Guest Customer';
+  }
+  
+  // Fallback to userId name only if no guestInfo exists
   if (order.userId?.name) {
     // Clean up user name if it has duplicates
     const name = (order.userId.name || '').trim();
@@ -25,26 +51,8 @@ const getCustomerName = (order) => {
     }
     return name;
   }
-  const firstName = (order.guestInfo?.firstName || '').trim();
-  const lastName = (order.guestInfo?.lastName || '').trim();
   
-  // Remove duplicates within firstName or lastName
-  const cleanFirstName = firstName ? firstName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
-  const cleanLastName = lastName ? lastName.split(/\s+/).filter((v, i, a) => a.indexOf(v) === i).join(' ') : '';
-  
-  if (cleanFirstName && cleanLastName) {
-    // If firstName already contains lastName, just return firstName
-    if (cleanFirstName.toLowerCase().includes(cleanLastName.toLowerCase())) {
-      return cleanFirstName;
-    }
-    // If lastName already contains firstName, just return lastName
-    if (cleanLastName.toLowerCase().includes(cleanFirstName.toLowerCase())) {
-      return cleanLastName;
-    }
-    // Normal case: combine them with a space
-    return `${cleanFirstName} ${cleanLastName}`;
-  }
-  return cleanFirstName || cleanLastName || 'Guest Customer';
+  return 'Guest Customer';
 };
 
 // NEW: Helper function to get API URL (works on both local and server)
@@ -236,21 +244,28 @@ async function cancelOrder(order, reason = 'user_cancelled') {
     // Send cancellation email
     try {
       const populatedOrder = await Order.findById(order._id)
-        .populate("items.productId", "name price images variants")
+        .populate("items.productId", "name price images variants specs")
         .populate("items.sellerId", "name email")
         .populate("outletId", "name location address phone email")
         .populate("userId", "name email phone")
         .lean();
 
-      const customer = populatedOrder.userId ? {
+      // Always prioritize guestInfo (form data) for customer contact details
+      // userId is only for order tracking/profile, not for shipping/contact info
+      const customer = populatedOrder.guestInfo ? {
+        email: populatedOrder.guestInfo.email,
+        phone: populatedOrder.guestInfo.phone,
+        name: getCustomerName(populatedOrder)
+      } : (populatedOrder.userId ? {
+        // Fallback to userId only if no guestInfo exists
         email: populatedOrder.userId.email,
         phone: populatedOrder.userId.phone,
         name: populatedOrder.userId.name
       } : {
-        email: populatedOrder.guestInfo?.email,
-        phone: populatedOrder.guestInfo?.phone,
-        name: getCustomerName(populatedOrder)
-      };
+        email: null,
+        phone: null,
+        name: 'Guest Customer'
+      });
 
       if (customer.email) {
         const notificationsModule = require('./notificationsRoutes');
@@ -279,8 +294,8 @@ async function createOrderDocument({ userId, guestInfo, items, total, paymentMet
   console.log("Creating order document with items:", items);
   const products = await Product.find({ _id: { $in: items.map(i => i.productId) } });
   const order = new Order({
-    userId: userId || undefined,
-    guestInfo: userId ? undefined : guestInfo,
+    userId: userId || undefined, // Set userId if logged in (for order tracking/profile)
+    guestInfo: guestInfo || undefined, // Always use form data for shipping/delivery details, even if logged in
     items: items.map(item => ({
       productId: item.productId,
       sellerId: products.find(p => p._id.equals(item.productId))?.sellerId,
@@ -317,8 +332,9 @@ async function createOrderDocument({ userId, guestInfo, items, total, paymentMet
 // In orderRoutes.js - find the sendOrderNotifications function and update it:
 async function sendOrderNotifications(order, isPickup = false, trackingNumber = null) {
   try {
-    const customerEmail = order.userId?.email || order.guestInfo?.email;
-    const customerPhone = order.userId?.phone || order.guestInfo?.phone;
+    // Always prioritize guestInfo (form data) for customer contact details
+    const customerEmail = order.guestInfo?.email || order.userId?.email;
+    const customerPhone = order.guestInfo?.phone || order.userId?.phone;
     const customerName = getCustomerName(order);
 
     const orderIdStr = order._id.toString();
@@ -426,7 +442,7 @@ async function sendOrderNotifications(order, isPickup = false, trackingNumber = 
       if (customerPhone) {
         try {
           const apiUrl = getApiUrl();
-          const trackingMessage = `Hello ${customerName}! Your order #${shortOrderId} has been shipped. Tracking Number: ${trackingNumber}. Track your order here: ${process.env.FRONTEND_URL}/track-order`;
+          const trackingMessage = `Hello ${customerName}! Your order #${shortOrderId} has been shipped. Tracking Number: ${trackingNumber}. Track your order here: ${process.env.FRONTEND_URL}/track-order or directly with DHL: https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`;
 
           await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
             to: customerPhone,
@@ -490,27 +506,52 @@ router.post("/stripe", async (req, res) => {
 
     const total = items.reduce((s, it) => s + (it.price || 0) * (it.quantity || 1), 0);
 
+    // NEW: Fetch product names for items missing names
+    const itemsWithNames = await Promise.all(items.map(async (item) => {
+      if (!item.name && item.productId) {
+        try {
+          const product = await Product.findById(item.productId);
+          if (product) {
+            item.name = product.name;
+            // Also get image if missing
+            if (!item.image && product.images && product.images.length > 0) {
+              item.image = product.images[0];
+            }
+          }
+        } catch (err) {
+          console.error(`Error fetching product ${item.productId}:`, err);
+        }
+      }
+      // Ensure name is always provided - use fallback if still missing
+      if (!item.name) {
+        item.name = `Product ${item.productId || 'Unknown'}`;
+      }
+      return item;
+    }));
+
     const order = await createOrderDocument({ 
       userId, 
       guestInfo, 
-      items, 
+      items: itemsWithNames, 
       total, 
       paymentMethod: "Stripe",
       deliveryMethod,
       outletId
     });
 
-    const lineItems = items.map((item) => ({
-      price_data: {
-        currency: "usd",
-        product_data: {
-          name: item.name,
-          images: item.image ? [item.image] : [],
+    const lineItems = itemsWithNames.map((item) => {
+      return {
+        price_data: {
+          currency: "eur", // Changed to EUR for Germany
+          product_data: {
+            name: item.name, // Now guaranteed to have a value
+            images: item.image ? [item.image] : [],
+          },
+          unit_amount: Math.round((item.price || 0) * 100),
         },
-        unit_amount: Math.round((item.price || 0) * 100),
-      },
-      quantity: item.quantity || 1,
-    }));
+        quantity: item.quantity || 1,
+      };
+    });
 
     if (!process.env.FRONTEND_URL || !/^https?:\/\//i.test(process.env.FRONTEND_URL)) {
       console.warn("FRONTEND_URL is missing or invalid in .env. Should include http:// or https://");
@@ -664,7 +705,7 @@ router.get("/all", authMiddleware, roleCheck(["admin","company"]), async (req, r
   try {
     console.log("Fetching all orders for admin");
     const orders = await Order.find()
-      .populate("items.productId", "name price images variants")
+      .populate("items.productId", "name price images variants specs")
       .populate("items.sellerId", "name email")
       .populate("userId", "name email phone")
       .populate("outletId", "name location address phone")
@@ -681,7 +722,7 @@ router.get("/cancelled", authMiddleware, roleCheck(["admin","company"]), async (
   try {
     console.log("Fetching cancelled orders for admin");
     const orders = await Order.find({ orderStatus: "Cancelled" })
-      .populate("items.productId", "name price images variants")
+      .populate("items.productId", "name price images variants specs")
       .populate("items.sellerId", "name email")
       .populate("userId", "name email phone")
       .populate("outletId", "name location address phone")
@@ -701,7 +742,7 @@ router.get("/admin/seller-candidates", authMiddleware, roleCheck(["admin","compa
     const sellerCandidateIds = sellerCandidates.map(s => s._id);
     
     const orders = await Order.find({ "items.sellerId": { $in: sellerCandidateIds } })
-      .populate("items.productId", "name price images")
+      .populate("items.productId", "name price images variants specs")
       .populate("items.sellerId", "name email")
       .populate("userId", "name email phone")
       .populate("outletId", "name location address phone")
@@ -726,7 +767,7 @@ router.post("/:orderId/process", authMiddleware, async (req, res) => {
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
     const order = await Order.findById(orderId)
-      .populate("items.productId")
+      .populate("items.productId", "name price images variants specs")
       .populate("userId", "name email phone")
       .populate("outletId", "name location address phone");
 
@@ -755,7 +796,7 @@ router.post("/:orderId/process", authMiddleware, async (req, res) => {
 
     // Re-fetch order with all populated fields to ensure data is fresh
     const updatedOrder = await Order.findById(orderId)
-      .populate("items.productId", "name price images variants")
+      .populate("items.productId", "name price images variants specs")
       .populate("items.sellerId", "name email")
       .populate("userId", "name email phone")
       .populate("outletId", "name location address phone")
@@ -800,7 +841,7 @@ async function sendOrderConfirmation(order) {
   try {
     // Populate order with product details before sending
     const populatedOrder = await Order.findById(order._id)
-      .populate("items.productId", "name price images variants")
+      .populate("items.productId", "name price images variants specs")
       .populate("items.sellerId", "name email")
       .populate("outletId", "name location address phone email")
       .populate("userId", "name email phone")
@@ -871,7 +912,7 @@ router.put("/:orderId/tracking", authMiddleware, roleCheck(["admin", "company"])
     ).populate("userId", "name email phone")
      .populate("guestInfo")
      .populate("outletId", "name location address phone")
-     .populate("items.productId", "name");
+     .populate("items.productId", "name price images variants specs");
 
     if (!order) return res.status(404).json({ message: "Order not found" });
 
@@ -925,7 +966,7 @@ router.put("/:orderId/tracking", authMiddleware, roleCheck(["admin", "company"])
         if (customerPhone) {
           try {
             const apiUrl = getApiUrl();
-            const whatsappMessage = `Your order #${order._id.slice(-8)} has been shipped! 🚚\n\nTracking Number: ${trackingNumber}\nTrack your package: https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}\n\nYour order will arrive soon!`;
+            const whatsappMessage = `Your order #${order._id.slice(-8)} has been shipped! 🚚\n\nTracking Number: ${trackingNumber}\nTrack your package: https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}\n\nYour order will arrive soon!`;
             
             await axios.post(`${apiUrl}/notifications/send-whatsapp`, {
               to: customerPhone,
@@ -993,28 +1034,93 @@ router.put("/:orderId/tracking", authMiddleware, roleCheck(["admin", "company"])
 // Track order by ID or tracking number
 router.get("/track/:orderId", async (req, res) => {
   try {
-    const order = await Order.findById(req.params.orderId)
-      .populate("items.productId", "name images")
-      .populate("items.sellerId", "name")
-      .populate("outletId", "name location address phone")
-      .select("-stripeSessionId");
-
-    if (!order) {
-      const orderByTracking = await Order.findOne({ trackingNumber: req.params.orderId })
-        .populate("items.productId", "name images")
+    const searchTerm = req.params.orderId.trim();
+    
+    if (!searchTerm) {
+      return res.status(400).json({ message: "Please provide an order ID or tracking number" });
+    }
+    
+    console.log("🔍 Searching for order with term:", searchTerm);
+    
+    // Check if search term is a valid MongoDB ObjectId (24 hex characters)
+    const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(searchTerm);
+    
+    let order = null;
+    
+    // Helper function to populate order with all necessary fields
+    const populateOrder = (orderQuery) => {
+      return orderQuery
+        .populate("items.productId", "name images variants specs")
         .populate("items.sellerId", "name")
         .populate("outletId", "name location address phone")
+        .populate("userId", "name email phone")
         .select("-stripeSessionId");
-      
-      if (!orderByTracking) {
-        return res.status(404).json({ message: "Order not found" });
-      }
-      return res.json(orderByTracking);
+    };
+    
+    // FIRST: Try to find by tracking number (most common use case for tracking)
+    // Search for exact match (case-sensitive for tracking numbers)
+    order = await populateOrder(
+      Order.findOne({ trackingNumber: searchTerm })
+    );
+    
+    if (order) {
+      console.log("✅ Found order by tracking number:", order._id);
+      console.log("📋 Order guestInfo:", order.guestInfo);
+      console.log("📋 Order userId:", order.userId);
+      return res.json(order);
     }
-
-    res.json(order);
+    
+    // SECOND: If not found by tracking number and search term is a valid ObjectId, try by order ID
+    if (isValidObjectId) {
+      try {
+        order = await populateOrder(
+          Order.findById(searchTerm)
+        );
+        
+        if (order) {
+          console.log("✅ Found order by ObjectId:", order._id);
+          console.log("📋 Order guestInfo:", order.guestInfo);
+          console.log("📋 Order userId:", order.userId);
+          return res.json(order);
+        }
+      } catch (idError) {
+        // If findById throws an error, continue to next search
+        console.log("⚠️ Invalid ObjectId format, trying other search methods");
+      }
+    }
+    
+    // THIRD: If still not found and search term is 8 characters, try to match by last 8 characters of order ID
+    if (!order && searchTerm.length === 8) {
+      try {
+        // Find all orders and filter by last 8 characters of _id
+        const allOrders = await populateOrder(
+          Order.find({})
+        ).lean();
+        
+        // Find order where last 8 characters of _id match
+        order = allOrders.find(o => {
+          const orderIdStr = o._id.toString();
+          return orderIdStr.slice(-8).toLowerCase() === searchTerm.toLowerCase();
+        });
+        
+        if (order) {
+          console.log("✅ Found order by last 8 characters:", order._id);
+          console.log("📋 Order guestInfo:", order.guestInfo);
+          console.log("📋 Order userId:", order.userId);
+          return res.json(order);
+        }
+      } catch (searchError) {
+        console.log("⚠️ Error in partial ID search:", searchError.message);
+      }
+    }
+    
+    console.log("❌ Order not found for search term:", searchTerm);
+    return res.status(404).json({ 
+      message: "Order not found. Please check your order ID or tracking number." 
+    });
+    
   } catch (err) {
-    console.error("Error tracking order:", err);
+    console.error("❌ Error tracking order:", err);
     res.status(500).json({ message: "Failed to track order" });
   }
 });
@@ -1043,7 +1149,7 @@ router.get("/processed/export-pdf", authMiddleware, roleCheck(["admin", "company
     }
 
     const orders = await Order.find(query)
-      .populate("items.productId", "name price variants")
+      .populate("items.productId", "name price variants specs")
       .populate("items.sellerId", "name email")
       .populate("userId", "name email phone")
       .populate("outletId", "name location address phone")
@@ -1091,15 +1197,17 @@ router.get("/processed/export-pdf", authMiddleware, roleCheck(["admin", "company
       const customerName = getCustomerName(order);
       doc.fontSize(10).fillColor("black").text(`Name: ${customerName}`);
       
-      if (order.userId) {
-        doc.text(`Email: ${order.userId.email || "N/A"}`);
-        doc.text(`Phone: ${order.userId.phone || "N/A"}`);
-      } else if (order.guestInfo) {
+      // Always prioritize guestInfo (form data) for customer contact details
+      if (order.guestInfo) {
         doc.text(`Email: ${order.guestInfo.email || "N/A"}`);
         doc.text(`Phone: ${order.guestInfo.phone || "N/A"}`);
         if (order.guestInfo.address) {
           doc.text(`Address: ${order.guestInfo.address}`);
         }
+      } else if (order.userId) {
+        // Fallback to userId only if no guestInfo exists
+        doc.text(`Email: ${order.userId.email || "N/A"}`);
+        doc.text(`Phone: ${order.userId.phone || "N/A"}`);
       }
       doc.moveDown(0.5);
 
@@ -1141,7 +1249,7 @@ router.get("/processed/export-pdf", authMiddleware, roleCheck(["admin", "company
         }
 
         doc.fontSize(10).fillColor("black")
-          .text(`   Quantity: ${quantity} x $${price.toFixed(2)} = $${itemTotal.toFixed(2)}`, { indent: 20 });
+          .text(`   Quantity: ${quantity} x €${price.toFixed(2)} = €${itemTotal.toFixed(2)}`, { indent: 20 });
       });
       doc.moveDown(0.5);
 
@@ -1156,7 +1264,7 @@ router.get("/processed/export-pdf", authMiddleware, roleCheck(["admin", "company
       if (order.outletId) {
         doc.text(`Pickup Outlet: ${order.outletId.name} - ${order.outletId.location || ""}`);
       }
-      doc.fontSize(12).fillColor("green").text(`Total: $${order.total.toFixed(2)}`, { align: "right" });
+      doc.fontSize(12).fillColor("green").text(`Total: €${order.total.toFixed(2)}`, { align: "right" });
 
       // Separator
       doc.moveDown(1);
