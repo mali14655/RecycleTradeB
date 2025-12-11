@@ -40,7 +40,7 @@ Body: { "to": "your-email@example.com" }
 - **For Cloud Servers (Railway, Vercel, etc.):** Use Resend.com
   ```env
   RESEND_API_KEY=re_your_api_key_here
-  EMAIL_FROM=RecycleTrade <onboarding@resend.dev>
+  EMAIL_FROM=F&S Smartphones <onboarding@resend.dev>
   ```
 
 - **For Local Development:** Use Gmail (if SMTP ports not blocked)
@@ -77,7 +77,7 @@ Body: { "to": "your-email@example.com" }
 4. Add to your `.env` file:
    ```env
    RESEND_API_KEY=re_your_key_here
-   EMAIL_FROM=RecycleTrade <onboarding@resend.dev>
+   EMAIL_FROM=F&S Smartphones <onboarding@resend.dev>
    ```
 5. Restart your backend server
 6. Test with: `GET /api/notifications/test-config`

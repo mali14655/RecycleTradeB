@@ -1,4 +1,4 @@
-# Email Setup Guide - RecycleTrade
+# Email Setup Guide - F&S Smartphones
 
 ## 🚨 IMPORTANT: Cloud Server SMTP Blocking
 
@@ -22,12 +22,12 @@ Resend uses HTTPS API (not SMTP), so it works on all servers.
 ### Step 2: Get API Key
 1. Go to [API Keys](https://resend.com/api-keys)
 2. Click "Create API Key"
-3. Name it "RecycleTrade Production"
+3. Name it "F&S Smartphones Production"
 4. Copy the key (starts with `re_`)
 
 ### Step 3: Add Domain (Optional but Recommended)
 1. Go to [Domains](https://resend.com/domains)
-2. Add your domain (e.g., `recycletrade.com`)
+2. Add your domain (e.g., `fssmartphones.com`)
 3. Add DNS records as shown
 4. Wait for verification (usually 5-10 minutes)
 
@@ -42,9 +42,9 @@ Resend uses HTTPS API (not SMTP), so it works on all servers.
 
 # Add Resend:
 RESEND_API_KEY=re_your_api_key_here
-EMAIL_FROM=RecycleTrade <onboarding@resend.dev>
+EMAIL_FROM=F&S Smartphones <onboarding@resend.dev>
 # OR if you verified a domain:
-EMAIL_FROM=RecycleTrade <noreply@yourdomain.com>
+EMAIL_FROM=F&S Smartphones <noreply@yourdomain.com>
 ```
 
 ### Step 5: Restart Server
@@ -109,7 +109,7 @@ If you really want to use Gmail on cloud servers, you need OAuth2:
 ```env
 # Production (Resend)
 RESEND_API_KEY=re_your_key_here
-EMAIL_FROM=RecycleTrade <noreply@yourdomain.com>
+EMAIL_FROM=F&S Smartphones <noreply@yourdomain.com>
 
 # Local Development (Gmail - optional)
 # EMAIL_USER=your-email@gmail.com

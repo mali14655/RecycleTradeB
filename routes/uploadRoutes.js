@@ -71,7 +71,7 @@ router.post("/upload", authMiddleware, upload.array("images", 5), async (req, re
           
           // Upload with direct method - simpler and more reliable than streams
           const result = await cloudinary.uploader.upload(dataUri, {
-            folder: "recycletrade/products",
+            folder: "fssmartphones/products",
             resource_type: "image",
             use_filename: true,
             unique_filename: true,
@@ -232,7 +232,7 @@ router.get("/test-connection", authMiddleware, async (req, res) => {
     const testImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
     
     const result = await cloudinary.uploader.upload(testImage, {
-      folder: "recycletrade/test",
+      folder: "fssmartphones/test",
       resource_type: "image",
       timeout: 30000,
     });

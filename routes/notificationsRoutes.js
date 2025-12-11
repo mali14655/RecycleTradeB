@@ -274,7 +274,7 @@ class UniversalEmailService {
       let from;
       
       if (typeof options.from === 'object') {
-        // Object format: { name: 'RecycleTrade', address: 'email@example.com' }
+        // Object format: { name: 'F&S Smartphones', address: 'email@example.com' }
         const fromAddress = options.from.address;
         const fromName = options.from.name;
         // Format for Resend: "Name <email@example.com>" or just "email@example.com"
@@ -296,7 +296,7 @@ class UniversalEmailService {
         if (defaultFrom.includes('<') && defaultFrom.includes('>')) {
           from = defaultFrom;
         } else {
-          from = `RecycleTrade <${defaultFrom}>`;
+          from = `F&S Smartphones <${defaultFrom}>`;
         }
       }
       
@@ -358,7 +358,7 @@ class UniversalEmailService {
     } else {
       // Just email address - create object for formatting
       defaultFrom = {
-        name: 'RecycleTrade',
+        name: 'F&S Smartphones',
         address: emailFrom
       };
     }
@@ -534,7 +534,7 @@ router.get("/debug-email", async (req, res) => {
     try {
       const result = await emailService.sendEmail({
         to: testEmail,
-        subject: 'Email Service Test - RecycleTrade',
+        subject: 'Email Service Test - F&S Smartphones',
         html: `
           <div style="font-family: Arial, sans-serif; padding: 20px;">
             <h2>✅ Email Service Test Successful!</h2>
@@ -607,11 +607,11 @@ router.post("/test-email", async (req, res) => {
 
     const result = await emailService.sendEmail({
       to,
-      subject: 'Test Email from RecycleTrade',
+      subject: 'Test Email from F&S Smartphones',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #10B981;">✅ Test Email Successful!</h2>
-          <p>This is a test email from your RecycleTrade application.</p>
+          <p>This is a test email from your F&S Smartphones application.</p>
           <div style="background: #f3f4f6; padding: 15px; border-radius: 8px; margin: 20px 0;">
             <h3>Configuration Details:</h3>
             <p><strong>Service:</strong> ${emailService.transporter?.name || 'Logged Only'}</p>
@@ -811,13 +811,13 @@ const sendOrderConfirmationEmail = async (order, customer) => {
             <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
               <p style="color: #6b7280; font-size: 14px; margin: 10px 0;">We'll notify you when your order status changes.</p>
               <p style="color: #6b7280; font-size: 14px; margin: 10px 0;">If you have any questions, please contact our support team.</p>
-              <p style="margin-top: 20px; color: #111827; font-weight: 600;">Best regards,<br><strong>RecycleTrade Team</strong></p>
+              <p style="margin-top: 20px; color: #111827; font-weight: 600;">Best regards,<br><strong>F&S Smartphones Team</strong></p>
             </div>
           </div>
 
           <!-- Footer Bar -->
           <div style="background: #f9fafb; padding: 20px; text-align: center; border-radius: 0 0 8px 8px; border-top: 1px solid #e5e7eb;">
-            <p style="color: #6b7280; font-size: 12px; margin: 0;">© ${new Date().getFullYear()} RecycleTrade. All rights reserved.</p>
+            <p style="color: #6b7280; font-size: 12px; margin: 0;">© ${new Date().getFullYear()} F&S Smartphones. All rights reserved.</p>
           </div>
         </div>
       `
@@ -1028,13 +1028,13 @@ const sendStatusUpdateEmail = async (to, order, customerName, status, trackingNu
           <!-- Footer -->
           <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
             <p style="color: #6b7280; font-size: 14px; margin: 10px 0;">If you have any questions about your order, please contact our support team.</p>
-            <p style="margin-top: 20px; color: #111827; font-weight: 600;">Best regards,<br><strong>RecycleTrade Team</strong></p>
+            <p style="margin-top: 20px; color: #111827; font-weight: 600;">Best regards,<br><strong>F&S Smartphones Team</strong></p>
           </div>
         </div>
 
         <!-- Footer Bar -->
         <div style="background: #f9fafb; padding: 20px; text-align: center; border-radius: 0 0 8px 8px; border-top: 1px solid #e5e7eb;">
-          <p style="color: #6b7280; font-size: 12px; margin: 0;">© ${new Date().getFullYear()} RecycleTrade. All rights reserved.</p>
+          <p style="color: #6b7280; font-size: 12px; margin: 0;">© ${new Date().getFullYear()} F&S Smartphones. All rights reserved.</p>
         </div>
       </div>
     `;
@@ -1247,13 +1247,13 @@ const sendOrderCancellationEmail = async (to, order, customerName, reason) => {
           <!-- Footer -->
           <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
             <p style="color: #6b7280; font-size: 14px; margin: 10px 0;">If you have any questions about this cancellation, please contact our support team.</p>
-            <p style="margin-top: 20px; color: #111827; font-weight: 600;">Best regards,<br><strong>RecycleTrade Team</strong></p>
+            <p style="margin-top: 20px; color: #111827; font-weight: 600;">Best regards,<br><strong>F&S Smartphones Team</strong></p>
           </div>
         </div>
 
         <!-- Footer Bar -->
         <div style="background: #f9fafb; padding: 20px; text-align: center; border-radius: 0 0 8px 8px; border-top: 1px solid #e5e7eb;">
-          <p style="color: #6b7280; font-size: 12px; margin: 0;">© ${new Date().getFullYear()} RecycleTrade. All rights reserved.</p>
+          <p style="color: #6b7280; font-size: 12px; margin: 0;">© ${new Date().getFullYear()} F&S Smartphones. All rights reserved.</p>
         </div>
       </div>
     `;

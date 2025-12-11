@@ -131,7 +131,7 @@ exports.register = async (req, res, next) => {
     // NEW: Ultra-simple email template with multiple clickable links
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h1 style="color: #333; font-size: 24px; margin-bottom: 20px;">Welcome to Mobitrade!</h1>
+        <h1 style="color: #333; font-size: 24px; margin-bottom: 20px;">Welcome to F&S Smartphones!</h1>
         
         <p style="color: #666; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hi ${name},</p>
         
@@ -157,7 +157,7 @@ exports.register = async (req, res, next) => {
 
     // NEW: Send verification email and check result
     console.log(`[REGISTER] Sending verification email to: ${email}`);
-    const emailResult = await sendEmail(email, "Verify Your Email - Mobitrade", emailHtml);
+    const emailResult = await sendEmail(email, "Verify Your Email - F&S Smartphones", emailHtml);
     
     // NEW: Don't return tokens - user needs to verify email first
     // Include email sending status in response
@@ -525,7 +525,7 @@ exports.resendVerification = async (req, res, next) => {
     // NEW: Ultra-simple email template with multiple clickable links
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h1 style="color: #333; font-size: 24px; margin-bottom: 20px;">Verify Your Email - Mobitrade</h1>
+        <h1 style="color: #333; font-size: 24px; margin-bottom: 20px;">Verify Your Email - F&S Smartphones</h1>
         
         <p style="color: #666; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hi ${user.name},</p>
         
@@ -549,7 +549,7 @@ exports.resendVerification = async (req, res, next) => {
       </div>
     `;
 
-    await sendEmail(email, "Verify Your Email - Mobitrade", emailHtml);
+    await sendEmail(email, "Verify Your Email - F&S Smartphones", emailHtml);
 
     res.json({ message: "Verification email sent! Please check your inbox." });
   } catch (err) {
@@ -594,7 +594,7 @@ exports.forgotPassword = async (req, res, next) => {
     // NEW: Ultra-simple email template with multiple clickable links
     const emailHtml = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-        <h1 style="color: #333; font-size: 24px; margin-bottom: 20px;">Reset Your Password - Mobitrade</h1>
+        <h1 style="color: #333; font-size: 24px; margin-bottom: 20px;">Reset Your Password - F&S Smartphones</h1>
         
         <p style="color: #666; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">Hi ${user.name},</p>
         
@@ -619,7 +619,7 @@ exports.forgotPassword = async (req, res, next) => {
     `;
 
     console.log(`[FORGOT-PASSWORD] Sending reset email to: ${email}`);
-    const emailResult = await sendEmail(email, "Reset Your Password - Mobitrade", emailHtml);
+    const emailResult = await sendEmail(email, "Reset Your Password - F&S Smartphones", emailHtml);
     
     if (emailResult.success) {
       console.log(`[FORGOT-PASSWORD] ✅ Reset email sent successfully to ${email}`);
