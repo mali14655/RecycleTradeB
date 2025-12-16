@@ -43,7 +43,8 @@
             .json({ message: "You are not verified to add products" });
         }
 
-        // NEW: Set product price and images from first variant if variants exist
+        // NEW: Set product price from first variant if variants exist
+        // NEW: Use provided images (common images) or fallback to first variant images
         let productPrice = price;
         let productImages = images || [];
         
@@ -52,8 +53,10 @@
           if (firstVariant.price !== undefined) {
             productPrice = firstVariant.price;
           }
-          // NEW: Use first variant's images for product.images
-          productImages = firstVariant.images || [];
+          // NEW: Only use first variant's images if no common images provided
+          if (productImages.length === 0) {
+            productImages = firstVariant.images || [];
+          }
         }
 
         const product = new Product({
@@ -123,7 +126,8 @@
         "name role"
       ).populate("categoryRef", "name specs");
       
-      // NEW: Update product price and images to first variant if variants exist
+      // NEW: Update product price from first variant if variants exist
+      // NEW: Keep product.images as common images (don't overwrite with variant images)
       const productsWithVariantData = products.map(product => {
         if (product.variants && product.variants.length > 0) {
           const firstEnabledVariant = product.variants.find(v => v.enabled !== false) || product.variants[0];
@@ -131,8 +135,9 @@
             if (firstEnabledVariant.price !== undefined) {
               product.price = firstEnabledVariant.price;
             }
-            // NEW: Sync product.images with first variant's images
-            if (firstEnabledVariant.images && firstEnabledVariant.images.length > 0) {
+            // NEW: Only use first variant's images if product has no common images
+            if ((!product.images || product.images.length === 0) && 
+                firstEnabledVariant.images && firstEnabledVariant.images.length > 0) {
               product.images = firstEnabledVariant.images;
             }
           }
@@ -178,14 +183,17 @@
           oldVariantsBySpecs.set(specsKey, variant);
         });
 
-        // NEW: Update product price and images from first variant if variants exist
+        // NEW: Update product price from first variant if variants exist
+        // NEW: Preserve provided images (common images) or fallback to first variant images
         if (req.body.variants && req.body.variants.length > 0) {
           const firstVariant = req.body.variants.find(v => v.enabled !== false) || req.body.variants[0];
           if (firstVariant && firstVariant.price !== undefined) {
             req.body.price = firstVariant.price;
           }
-          // NEW: Sync product.images with first variant's images
-          req.body.images = firstVariant.images || [];
+          // NEW: Only use first variant's images if no common images provided
+          if (!req.body.images || req.body.images.length === 0) {
+            req.body.images = firstVariant.images || [];
+          }
         }
 
         // NEW: Delete old product.images that are no longer used
@@ -345,15 +353,17 @@
         .populate("categoryRef", "name specs");
       if (!product) return res.status(404).json({ message: "Product not found" });
       
-      // NEW: Update product price and images to first variant if variants exist
+      // NEW: Update product price from first variant if variants exist
+      // NEW: Keep product.images as common images (don't overwrite with variant images)
       if (product.variants && product.variants.length > 0) {
         const firstEnabledVariant = product.variants.find(v => v.enabled !== false) || product.variants[0];
         if (firstEnabledVariant) {
           if (firstEnabledVariant.price !== undefined) {
             product.price = firstEnabledVariant.price;
           }
-          // NEW: Sync product.images with first variant's images
-          if (firstEnabledVariant.images && firstEnabledVariant.images.length > 0) {
+          // NEW: Only use first variant's images if product has no common images
+          if ((!product.images || product.images.length === 0) && 
+              firstEnabledVariant.images && firstEnabledVariant.images.length > 0) {
             product.images = firstEnabledVariant.images;
           }
         }
@@ -398,7 +408,8 @@
         .populate("sellerId", "name role")
         .populate("categoryRef", "name specs");
       
-      // NEW: Update product price and images to first variant if variants exist
+      // NEW: Update product price from first variant if variants exist
+      // NEW: Keep product.images as common images (don't overwrite with variant images)
       const productsWithVariantData = products.map(product => {
         if (product.variants && product.variants.length > 0) {
           const firstEnabledVariant = product.variants.find(v => v.enabled !== false) || product.variants[0];
@@ -406,8 +417,9 @@
             if (firstEnabledVariant.price !== undefined) {
               product.price = firstEnabledVariant.price;
             }
-            // NEW: Sync product.images with first variant's images
-            if (firstEnabledVariant.images && firstEnabledVariant.images.length > 0) {
+            // NEW: Only use first variant's images if product has no common images
+            if ((!product.images || product.images.length === 0) && 
+                firstEnabledVariant.images && firstEnabledVariant.images.length > 0) {
               product.images = firstEnabledVariant.images;
             }
           }
