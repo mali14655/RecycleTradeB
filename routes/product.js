@@ -45,7 +45,8 @@
 
         // NEW: Set product price from first variant if variants exist
         // NEW: Use provided images (common images) or fallback to first variant images
-        let productPrice = price;
+        // NEW: Treat empty-string price as "not provided"
+        let productPrice = (price === "" ? undefined : price);
         let productImages = images || [];
         
         if (variants && variants.length > 0) {
@@ -57,6 +58,11 @@
           if (productImages.length === 0) {
             productImages = firstVariant.images || [];
           }
+        }
+        
+        // NEW: If price is still not provided (and no variant price), keep legacy-safe numeric default
+        if (productPrice === undefined || productPrice === null || Number.isNaN(Number(productPrice))) {
+          productPrice = 0;
         }
 
         const product = new Product({

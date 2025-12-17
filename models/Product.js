@@ -21,7 +21,9 @@ const reviewSchema = new mongoose.Schema({
 const productSchema = new mongoose.Schema({
   name: { type: String, required: true },
   description: { type: String },
-  price: { type: Number, required: true },
+  // NEW: Make price optional to support variant-priced products during creation.
+  // NEW: Default to 0 to preserve existing flows that assume a numeric price.
+  price: { type: Number, required: false, default: 0 },
   sellerId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",

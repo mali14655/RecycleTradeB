@@ -26,7 +26,8 @@
     "nodemailer": "^7.0.10",
     "pdfkit": "^0.17.2",
     "stripe": "^19.1.0",
-    "twilio": "^5.10.5"
+    "twilio": "^5.10.5",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
