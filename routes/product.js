@@ -117,20 +117,95 @@
         filter.condition = condition;
       }
 
-      // Search filter
-      if (search) {
-        filter.$or = [
-          { name: { $regex: search, $options: "i" } },
-          { description: { $regex: search, $options: "i" } },
-        ];
-      }
+      // Normalize search query: remove spaces and convert to lowercase for robust matching
+      // This allows "iphone12 pro" to match "iPhone 12 Pro"
+      const normalizeSearch = (text) => {
+        if (!text) return '';
+        return text.toLowerCase().replace(/\s+/g, '');
+      };
+
+      // For search, we'll do comprehensive filtering after fetching
+      // Don't use regex filter as it doesn't handle space variations well
+      // Instead, fetch products based on other filters and do robust search in JavaScript
 
       console.log("Filtering with:", filter);
 
-      const products = await Product.find(filter).populate(
+      let products = await Product.find(filter).populate(
         "sellerId",
         "name role"
       ).populate("categoryRef", "name specs");
+      
+      // Robust search with space-insensitive and case-insensitive matching
+      if (search) {
+        const normalizedSearch = normalizeSearch(search);
+        
+        // Helper function to check if normalized text matches
+        // This checks if search term is contained in the normalized text
+        const matchesNormalized = (text, searchTerm) => {
+          if (!text) return false;
+          const normalizedText = normalizeSearch(text);
+          return normalizedText.includes(searchTerm);
+        };
+        
+        products = products.filter(product => {
+          // Check product name (normalized, space-insensitive)
+          // e.g., "iphone12 pro" matches "iPhone 12 Pro"
+          if (matchesNormalized(product.name, normalizedSearch)) {
+            return true;
+          }
+          
+          // Check product description
+          if (matchesNormalized(product.description, normalizedSearch)) {
+            return true;
+          }
+          
+          // Check category
+          if (matchesNormalized(product.category, normalizedSearch)) {
+            return true;
+          }
+          
+          // Check category name from populated categoryRef
+          if (matchesNormalized(product.categoryRef?.name, normalizedSearch)) {
+            return true;
+          }
+          
+          // Check product specs values (Map type)
+          if (product.specs && product.specs instanceof Map) {
+            for (const value of product.specs.values()) {
+              if (matchesNormalized(value, normalizedSearch)) {
+                return true;
+              }
+            }
+          } else if (product.specs && typeof product.specs === 'object') {
+            for (const value of Object.values(product.specs)) {
+              if (matchesNormalized(value, normalizedSearch)) {
+                return true;
+              }
+            }
+          }
+          
+          // Check variant specs values (Color, Storage, etc.)
+          if (product.variants && product.variants.length > 0) {
+            for (const variant of product.variants) {
+              if (variant.specs && variant.specs instanceof Map) {
+                for (const value of variant.specs.values()) {
+                  if (matchesNormalized(value, normalizedSearch)) {
+                    return true;
+                  }
+                }
+              } else if (variant.specs && typeof variant.specs === 'object') {
+                for (const value of Object.values(variant.specs)) {
+                  if (matchesNormalized(value, normalizedSearch)) {
+                    return true;
+                  }
+                }
+              }
+            }
+          }
+          
+          return false;
+        });
+      }
       
       // NEW: Update product price from first variant if variants exist
       // NEW: Keep product.images as common images (don't overwrite with variant images)
