@@ -24,11 +24,61 @@ const deleteImagesFromCloudinary = async (imageUrls, authHeader) => {
   }
 };
 
+// Sort categories function - iPhone series first (12, 13, 14, 15...), then others
+function sortCategories(categories) {
+  return categories.sort((a, b) => {
+    const nameA = a.name.toLowerCase();
+    const nameB = b.name.toLowerCase();
+    
+    // Extract iPhone series number if it's an iPhone category
+    const iphoneMatchA = nameA.match(/iphone\s*(\d+)/);
+    const iphoneMatchB = nameB.match(/iphone\s*(\d+)/);
+    
+    // If both are iPhones, sort by series number first
+    if (iphoneMatchA && iphoneMatchB) {
+      const seriesA = parseInt(iphoneMatchA[1]);
+      const seriesB = parseInt(iphoneMatchB[1]);
+      
+      if (seriesA !== seriesB) {
+        return seriesA - seriesB; // Lower series number comes first
+      }
+      
+      // Same series, sort by variant type: base, mini, Plus, Pro, Pro Max
+      const variantOrder = { '': 0, 'mini': 1, 'plus': 2, 'pro': 3, 'pro max': 4 };
+      let variantA = nameA.replace(/iphone\s*\d+\s*/i, '').trim();
+      let variantB = nameB.replace(/iphone\s*\d+\s*/i, '').trim();
+      
+      // Normalize variant names - handle "pro max" specifically
+      variantA = variantA.toLowerCase().replace(/\s+/g, ' ');
+      variantB = variantB.toLowerCase().replace(/\s+/g, ' ');
+      
+      const orderA = variantOrder[variantA] ?? 5; // Default order for unknown variants
+      const orderB = variantOrder[variantB] ?? 5;
+      
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      
+      // If same variant order, sort alphabetically
+      return nameA.localeCompare(nameB);
+    }
+    
+    // If only A is iPhone, it comes first
+    if (iphoneMatchA) return -1;
+    // If only B is iPhone, it comes first
+    if (iphoneMatchB) return 1;
+    
+    // Neither is iPhone, sort alphabetically
+    return nameA.localeCompare(nameB);
+  });
+}
+
 // Get all categories
 router.get("/", async (req, res) => {
   try {
-    const categories = await Category.find().sort({ name: 1 });
-    res.json(categories);
+    const categories = await Category.find();
+    const sortedCategories = sortCategories(categories);
+    res.json(sortedCategories);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

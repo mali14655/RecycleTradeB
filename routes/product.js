@@ -273,35 +273,55 @@
         });
 
         // NEW: Update product price from first variant if variants exist
-        // NEW: Preserve provided images (common images) or fallback to first variant images
+        // NEW: Preserve existing common images - only overwrite if explicitly provided in request
         if (req.body.variants && req.body.variants.length > 0) {
           const firstVariant = req.body.variants.find(v => v.enabled !== false) || req.body.variants[0];
           if (firstVariant && firstVariant.price !== undefined) {
             req.body.price = firstVariant.price;
           }
-          // NEW: Only use first variant's images if no common images provided
-          if (!req.body.images || req.body.images.length === 0) {
-            req.body.images = firstVariant.images || [];
+          // NEW: Preserve existing product.images if images field not provided in request
+          // Only set req.body.images if it wasn't provided (undefined), to preserve existing images
+          if (!('images' in req.body)) {
+            // images field not in request - preserve existing ones
+            // Don't set req.body.images, so Object.assign won't overwrite product.images
+            // This ensures existing common images are preserved when only variants are updated
+            // Set a flag to skip image deletion logic
+            req.body._preserveImages = true;
+          } else if (!req.body.images || req.body.images.length === 0) {
+            // images field was provided but is empty - only use variant fallback if no existing images
+            if (!product.images || product.images.length === 0) {
+              req.body.images = firstVariant.images || [];
+            } else {
+              // Keep existing images if provided images array is empty but product has images
+              // Set flag to preserve and skip deletion
+              delete req.body.images; // Remove from update to preserve existing
+              req.body._preserveImages = true;
+            }
           }
         }
 
         // NEW: Delete old product.images that are no longer used
-        if (req.body.images && req.body.images.length > 0) {
-          const oldProductImagesToDelete = oldProductImages.filter(oldImg => 
-            !req.body.images.includes(oldImg)
-          );
-          
-          if (oldProductImagesToDelete.length > 0) {
-            deleteImagesFromCloudinary(oldProductImagesToDelete, req.headers.authorization).catch(err => {
+        // Skip deletion if we're preserving existing images
+        if (!req.body._preserveImages) {
+          if (req.body.images && req.body.images.length > 0) {
+            const oldProductImagesToDelete = oldProductImages.filter(oldImg => 
+              !req.body.images.includes(oldImg)
+            );
+            
+            if (oldProductImagesToDelete.length > 0) {
+              deleteImagesFromCloudinary(oldProductImagesToDelete, req.headers.authorization).catch(err => {
+                console.error("Error deleting old product images:", err);
+              });
+            }
+          } else if (oldProductImages.length > 0) {
+            // If new product.images is empty but old had images, delete all old ones
+            deleteImagesFromCloudinary(oldProductImages, req.headers.authorization).catch(err => {
               console.error("Error deleting old product images:", err);
             });
           }
-        } else if (oldProductImages.length > 0) {
-          // If new product.images is empty but old had images, delete all old ones
-          deleteImagesFromCloudinary(oldProductImages, req.headers.authorization).catch(err => {
-            console.error("Error deleting old product images:", err);
-          });
         }
+        // Remove the flag before saving
+        delete req.body._preserveImages;
 
         // NEW: Delete old variant images that were replaced or removed
         if (req.body.variants && req.body.variants.length > 0) {
