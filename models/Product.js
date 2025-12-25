@@ -6,7 +6,11 @@ const variantSchema = new mongoose.Schema({
   images: [{ type: String }],
   sku: { type: String },
   enabled: { type: Boolean, default: true },
-  stock: { type: Number, default: 0, min: 0 }
+  stock: { type: Number, default: 0, min: 0 },
+  // NEW: Appearance condition (Premium, Excellent, Very good, Good)
+  appearance: { type: String, enum: ['Premium', 'Excellent', 'Very good', 'Good'], required: false },
+  // NEW: Battery type (Optimal, New)
+  battery: { type: String, enum: ['Optimal', 'New'], required: false }
 }, { _id: true });
 
 const reviewSchema = new mongoose.Schema({

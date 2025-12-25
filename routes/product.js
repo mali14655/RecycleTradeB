@@ -121,7 +121,8 @@
       // This allows "iphone12 pro" to match "iPhone 12 Pro"
       const normalizeSearch = (text) => {
         if (!text) return '';
-        return text.toLowerCase().replace(/\s+/g, '');
+        // Convert to string, trim, lowercase, and remove all spaces
+        return String(text).trim().toLowerCase().replace(/\s+/g, '');
       };
 
       // For search, we'll do comprehensive filtering after fetching
@@ -129,14 +130,19 @@
       // Instead, fetch products based on other filters and do robust search in JavaScript
 
       console.log("Filtering with:", filter);
+      if (search) {
+        console.log("Search term:", search, "Normalized:", normalizeSearch(search));
+      }
 
       let products = await Product.find(filter).populate(
         "sellerId",
         "name role"
       ).populate("categoryRef", "name specs");
       
+      console.log(`Fetched ${products.length} products before search filtering`);
+      
       // Robust search with space-insensitive and case-insensitive matching
-      if (search) {
+      if (search && search.trim()) {
         const normalizedSearch = normalizeSearch(search);
         
         // Helper function to check if normalized text matches
@@ -205,6 +211,8 @@
           
           return false;
         });
+        
+        console.log(`After search filtering: ${products.length} products match`);
       }
       
       // NEW: Update product price from first variant if variants exist
