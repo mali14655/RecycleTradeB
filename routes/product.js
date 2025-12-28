@@ -86,6 +86,37 @@
     }
   );
 
+  // NEW: Get search suggestions for autocomplete
+  router.get("/search-suggestions", async (req, res) => {
+    try {
+      const { q } = req.query;
+      
+      if (!q || q.trim().length < 2) {
+        return res.json([]);
+      }
+      
+      // Use FULL search query, not truncated
+      const fullSearchTerm = q.trim().toLowerCase();
+      console.log("Search suggestions: Full query received:", fullSearchTerm, "Length:", fullSearchTerm.length);
+      
+      // Get all product names for suggestions
+      const products = await Product.find({}, 'name').limit(20);
+      
+      // Filter and format suggestions - use FULL search term
+      const suggestions = products
+        .map(product => product.name)
+        .filter(name => name && name.toLowerCase().includes(fullSearchTerm)) // Use full term, not just first 2 chars
+        .slice(0, 5) // Limit to 5 suggestions
+        .map(name => ({ name, value: name }));
+      
+      console.log("Search suggestions: Returning", suggestions.length, "suggestions");
+      res.json(suggestions);
+    } catch (err) {
+      console.error("Error fetching search suggestions:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // Get all products with filtering
   router.get("/", async (req, res) => {
     try {
@@ -105,12 +136,8 @@
         filter.category = { $regex: category, $options: "i" };
       }
 
-      // Price range filter
-      if (minPrice || maxPrice) {
-        filter.price = {};
-        if (minPrice) filter.price.$gte = Number(minPrice);
-        if (maxPrice) filter.price.$lte = Number(maxPrice);
-      }
+      // NEW: Price filtering is now done after fetching to check variant prices
+      // Removed MongoDB price filter - we'll filter by minimum variant price in JavaScript
 
       // Condition filter
       if (condition) {
@@ -125,13 +152,30 @@
         return String(text).trim().toLowerCase().replace(/\s+/g, '');
       };
 
+      // Helper function to get minimum price from product variants
+      // NEW: Returns the least price among all enabled variants, or product.price if no variants
+      const getMinimumVariantPrice = (product) => {
+        if (product.variants && product.variants.length > 0) {
+          // Filter enabled variants and get their prices
+          const enabledVariants = product.variants.filter(v => v.enabled !== false);
+          if (enabledVariants.length > 0) {
+            const prices = enabledVariants.map(v => v.price).filter(price => price !== undefined && price !== null);
+            if (prices.length > 0) {
+              return Math.min(...prices);
+            }
+          }
+        }
+        // Fallback to product.price if no variants or no valid variant prices
+        return product.price || 0;
+      };
+
       // For search, we'll do comprehensive filtering after fetching
       // Don't use regex filter as it doesn't handle space variations well
       // Instead, fetch products based on other filters and do robust search in JavaScript
 
       console.log("Filtering with:", filter);
       if (search) {
-        console.log("Search term:", search, "Normalized:", normalizeSearch(search));
+        console.log("Backend received search term:", search, "Length:", search.length, "Normalized:", normalizeSearch(search));
       }
 
       let products = await Product.find(filter).populate(
@@ -139,80 +183,37 @@
         "name role"
       ).populate("categoryRef", "name specs");
       
-      console.log(`Fetched ${products.length} products before search filtering`);
+      console.log(`Fetched ${products.length} products before filtering`);
       
-      // Robust search with space-insensitive and case-insensitive matching
+      // NEW: Filter by search FIRST, then by price
+      // This ensures search results are properly filtered by price range
       if (search && search.trim()) {
         const normalizedSearch = normalizeSearch(search);
         
-        // Helper function to check if normalized text matches
-        // This checks if search term is contained in the normalized text
-        const matchesNormalized = (text, searchTerm) => {
-          if (!text) return false;
-          const normalizedText = normalizeSearch(text);
-          return normalizedText.includes(searchTerm);
-        };
-        
         products = products.filter(product => {
-          // Check product name (normalized, space-insensitive)
-          // e.g., "iphone12 pro" matches "iPhone 12 Pro"
-          if (matchesNormalized(product.name, normalizedSearch)) {
-            return true;
-          }
+          // NEW: Only check product name with exact matching (normalized)
+          // "iphone 13" matches "iPhone 13", "iphone13", "IPHONE 13" but NOT "iPhone 12", "iPhone 14", or "iPhone 13 Pro"
+          const normalizedProductName = normalizeSearch(product.name);
           
-          // Check product description
-          if (matchesNormalized(product.description, normalizedSearch)) {
-            return true;
-          }
-          
-          // Check category
-          if (matchesNormalized(product.category, normalizedSearch)) {
-            return true;
-          }
-          
-          // Check category name from populated categoryRef
-          if (matchesNormalized(product.categoryRef?.name, normalizedSearch)) {
-            return true;
-          }
-          
-          // Check product specs values (Map type)
-          if (product.specs && product.specs instanceof Map) {
-            for (const value of product.specs.values()) {
-              if (matchesNormalized(value, normalizedSearch)) {
-                return true;
-              }
-            }
-          } else if (product.specs && typeof product.specs === 'object') {
-            for (const value of Object.values(product.specs)) {
-              if (matchesNormalized(value, normalizedSearch)) {
-                return true;
-              }
-            }
-          }
-          
-          // Check variant specs values (Color, Storage, etc.)
-          if (product.variants && product.variants.length > 0) {
-            for (const variant of product.variants) {
-              if (variant.specs && variant.specs instanceof Map) {
-                for (const value of variant.specs.values()) {
-                  if (matchesNormalized(value, normalizedSearch)) {
-                    return true;
-                  }
-                }
-              } else if (variant.specs && typeof variant.specs === 'object') {
-                for (const value of Object.values(variant.specs)) {
-                  if (matchesNormalized(value, normalizedSearch)) {
-                    return true;
-                  }
-                }
-              }
-            }
-          }
-          
-          return false;
+          // Exact match only - ensures "iphone 13" only matches products named exactly "iPhone 13"
+          // This prevents matching "iPhone 12" or "iPhone 14" which would have normalized names "iphone12" and "iphone14"
+          return normalizedProductName === normalizedSearch;
         });
         
         console.log(`After search filtering: ${products.length} products match`);
+      }
+      
+      // NEW: Filter by price range AFTER search (so price filter works with search results)
+      if (minPrice || maxPrice) {
+        const minPriceNum = minPrice ? Number(minPrice) : 0;
+        const maxPriceNum = maxPrice ? Number(maxPrice) : Number.MAX_SAFE_INTEGER;
+        
+        products = products.filter(product => {
+          const minVariantPrice = getMinimumVariantPrice(product);
+          return minVariantPrice >= minPriceNum && minVariantPrice <= maxPriceNum;
+        });
+        
+        console.log(`After price filtering (by variant min price): ${products.length} products match`);
       }
       
       // NEW: Update product price from first variant if variants exist
