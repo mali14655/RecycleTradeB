@@ -24,7 +24,7 @@ const deleteImagesFromCloudinary = async (imageUrls, authHeader) => {
   }
 };
 
-// Sort categories function - iPhone series first (12, 13, 14, 15...), then others
+// Sort categories function - iPhone series first (12, 13, 14, 15, 16...), then others
 function sortCategories(categories) {
   return categories.sort((a, b) => {
     const nameA = a.name.toLowerCase();
