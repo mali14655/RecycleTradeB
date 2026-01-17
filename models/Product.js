@@ -19,6 +19,7 @@ const reviewSchema = new mongoose.Schema({
   email: { type: String },
   rating: { type: Number, required: true },
   comment: { type: String },
+  images: [{ type: String }], // NEW: Review images
   createdAt: { type: Date, default: Date.now },
 });
 

@@ -2,11 +2,12 @@ const express = require("express");
 const router = express.Router();
 const Product = require("../models/Product");
 const { authMiddleware, roleCheck } = require("../middlewares/auth");
+const cloudinary = require("cloudinary").v2;
 
 // Add review
 router.post("/:productId/reviews", async (req, res) => {
   try {
-    const { rating, comment, name, email, userId } = req.body;
+    const { rating, comment, name, email, userId, images } = req.body;
 
     if (!rating) {
       return res.status(400).json({ message: "Rating is required" });
@@ -17,7 +18,11 @@ router.post("/:productId/reviews", async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    const review = { rating, comment };
+    const review = { 
+      rating, 
+      comment,
+      images: images || [] // NEW: Include review images
+    };
 
     // Check if user is registered or not
     if (userId) {
@@ -54,7 +59,7 @@ router.get("/:productId/reviews", async (req, res) => {
 // NEW: Update a review (Admin only)
 router.put("/:productId/reviews/:reviewId", authMiddleware, roleCheck(["admin"]), async (req, res) => {
   try {
-    const { rating, comment } = req.body;
+    const { rating, comment, images } = req.body;
     const { productId, reviewId } = req.params;
 
     const product = await Product.findById(productId);
@@ -67,8 +72,32 @@ router.put("/:productId/reviews/:reviewId", authMiddleware, roleCheck(["admin"])
       return res.status(404).json({ message: "Review not found" });
     }
 
+    // NEW: Delete old images that are not in the new images array
+    if (images !== undefined && review.images && review.images.length > 0) {
+      const imagesToDelete = review.images.filter(img => !images.includes(img));
+      for (const imageUrl of imagesToDelete) {
+        try {
+          // Extract public_id from Cloudinary URL
+          const urlParts = imageUrl.split('/');
+          const uploadIndex = urlParts.findIndex(part => part === 'upload');
+          if (uploadIndex !== -1 && uploadIndex < urlParts.length - 1) {
+            const afterUpload = urlParts.slice(uploadIndex + 1);
+            const pathParts = afterUpload[0].startsWith('v') && /^v\d+$/.test(afterUpload[0])
+              ? afterUpload.slice(1)
+              : afterUpload;
+            const pathWithId = pathParts.join('/');
+            const publicId = pathWithId.replace(/\.[^/.]+$/, '');
+            await cloudinary.uploader.destroy(publicId).catch(err => console.error("Error deleting review image:", err));
+          }
+        } catch (err) {
+          console.error("Error deleting review image:", err);
+        }
+      }
+    }
+
     if (rating !== undefined) review.rating = rating;
     if (comment !== undefined) review.comment = comment;
+    if (images !== undefined) review.images = images; // NEW: Update review images
 
     await product.save();
 
@@ -95,6 +124,28 @@ router.delete("/:productId/reviews/:reviewId", authMiddleware, roleCheck(["admin
     const review = product.reviews.id(reviewId);
     if (!review) {
       return res.status(404).json({ message: "Review not found" });
+    }
+
+    // NEW: Delete review images from Cloudinary before deleting review
+    if (review.images && review.images.length > 0) {
+      for (const imageUrl of review.images) {
+        try {
+          // Extract public_id from Cloudinary URL
+          const urlParts = imageUrl.split('/');
+          const uploadIndex = urlParts.findIndex(part => part === 'upload');
+          if (uploadIndex !== -1 && uploadIndex < urlParts.length - 1) {
+            const afterUpload = urlParts.slice(uploadIndex + 1);
+            const pathParts = afterUpload[0].startsWith('v') && /^v\d+$/.test(afterUpload[0])
+              ? afterUpload.slice(1)
+              : afterUpload;
+            const pathWithId = pathParts.join('/');
+            const publicId = pathWithId.replace(/\.[^/.]+$/, '');
+            await cloudinary.uploader.destroy(publicId).catch(err => console.error("Error deleting review image:", err));
+          }
+        } catch (err) {
+          console.error("Error deleting review image:", err);
+        }
+      }
     }
 
     product.reviews.pull(reviewId);
